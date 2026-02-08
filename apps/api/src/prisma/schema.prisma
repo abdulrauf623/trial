@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+enum AccountType {
+  creator
+  user
+}
+
+enum ItemSource {
+  creator
+  ai_detected
+}
+
+model User {
+  id                String    @id @default(uuid()) @db.Uuid
+  email             String    @unique
+  passwordHash      String?   @map("password_hash")
+  accountType       AccountType @map("account_type")
+  displayName       String    @map("display_name")
+  avatarUrl         String?   @map("avatar_url")
+  stylePreferences  String[]  @default([]) @map("style_preferences")
+  isPremium         Boolean   @default(false) @map("is_premium")
+  premiumExpiresAt  DateTime? @map("premium_expires_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  posts             Post[]
+  likes             Like[]
+  savedPosts        SavedPost[]
+  wardrobeItems     WardrobeItem[]
+  wardrobeCollections WardrobeCollection[]
+  following         Follow[] @relation("UserFollows")
+  followers         Follow[] @relation("UserFollowers")
+  reports           Report[] @relation("UserReports")
+
+  @@index([email])
+  @@index([accountType])
+  @@map("users")
+}
+
+model Post {
+  id              String   @id @default(uuid()) @db.Uuid
+  creatorId       String   @map("creator_id") @db.Uuid
+  caption         String?
+  imageUrls       String[] @map("image_urls")
+  tags            String[] @default([])
+  engagementScore Float    @default(0) @map("engagement_score")
+  embedding       Unsupported("vector(768)")?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  creator         User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  clothingItems   ClothingItem[]
+  likes           Like[]
+  savedPosts      SavedPost[]
+
+  @@index([creatorId])
+  @@index([createdAt(sort: Desc)])
+  @@index([engagementScore(sort: Desc), createdAt(sort: Desc)])
+  @@map("posts")
+}
+
+model ClothingItem {
+  id          String      @id @default(uuid()) @db.Uuid
+  postId      String      @map("post_id") @db.Uuid
+  imageIndex  Int         @map("image_index")
+  bbox        Json?
+  category    String?
+  brand       String?
+  name        String?
+  price       Decimal?    @db.Decimal(10, 2)
+  color       String?
+  pattern     String?
+  productUrl  String?     @map("product_url")
+  source      ItemSource  @default(creator)
+  confidence  Float?
+  embedding   Unsupported("vector(768)")?
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  post        Post        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  wardrobeItems WardrobeItem[]
+
+  @@index([postId])
+  @@index([category])
+  @@map("clothing_items")
+}
+
+model Like {
+  userId    String   @map("user_id") @db.Uuid
+  postId    String   @map("post_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId])
+  @@map("likes")
+}
+
+model SavedPost {
+  userId    String   @map("user_id") @db.Uuid
+  postId    String   @map("post_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId])
+  @@map("saved_posts")
+}
+
+model WardrobeCollection {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  name       String
+  icon       String?
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items      WardrobeItem[]
+
+  @@index([userId])
+  @@map("wardrobe_collections")
+}
+
+model WardrobeItem {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  collectionId    String?   @map("collection_id") @db.Uuid
+  clothingItemId  String?   @map("clothing_item_id") @db.Uuid
+  snapshot        Json
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collection      WardrobeCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  clothingItem    ClothingItem? @relation(fields: [clothingItemId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([collectionId])
+  @@map("wardrobe_items")
+}
+
+model Follow {
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower    User     @relation("UserFollows", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("UserFollowers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+  @@map("follows")
+}
+
+enum ReportReason {
+  spam
+  inappropriate_content
+  harassment
+  fake_account
+  intellectual_property
+  other
+}
+
+enum ReportStatus {
+  pending
+  reviewed
+  resolved
+  dismissed
+}
+
+model Report {
+  id          String        @id @default(uuid()) @db.Uuid
+  reporterId  String        @map("reporter_id") @db.Uuid
+  targetType  String        @map("target_type") // 'post' or 'user'
+  targetId    String        @map("target_id") @db.Uuid
+  reason      ReportReason
+  description String?
+  status      ReportStatus  @default(pending)
+  reviewedBy  String?       @map("reviewed_by") @db.Uuid
+  reviewedAt  DateTime?     @map("reviewed_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  reporter    User          @relation("UserReports", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([reporterId])
+  @@index([targetType, targetId])
+  @@index([status])
+  @@map("reports")
+}

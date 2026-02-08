@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm db:push:*)",
+      "Bash(timeout 10 pnpm start:dev:*)",
+      "Bash(pnpm add:*)",
+      "Bash(chmod:*)",
+      "Bash(/Users/abdul/trial/verify-implementation.sh:*)",
+      "Bash(timeout 15 pnpm start:dev:*)"
+    ]
+  }
+}
