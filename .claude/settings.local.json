@@ -10,7 +10,18 @@
       "Bash(pnpm add:*)",
       "Bash(chmod:*)",
       "Bash(/Users/abdul/trial/verify-implementation.sh:*)",
-      "Bash(timeout 15 pnpm start:dev:*)"
+      "Bash(timeout 15 pnpm start:dev:*)",
+      "Bash(pnpm prisma migrate dev:*)",
+      "Bash(pnpm prisma generate:*)",
+      "Bash(pnpm prisma db push:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(ipconfig:*)",
+      "Bash(lsof:*)",
+      "Bash(docker exec:*)",
+      "Bash(npm start)",
+      "Bash(pnpm seed:*)"
     ]
   }
 }

@@ -1,10 +1,12 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
+import { StorageService } from '../storage/storage.service';
+import { ProcessingService } from '../processing/processing.service';
 
 interface Job {
   id: string;
-  type: 'generate_post_embedding' | 'generate_item_embedding';
+  type: 'generate_post_embedding' | 'generate_item_embedding' | 'process_garment_image';
   data: any;
   retries: number;
   maxRetries: number;
@@ -17,7 +19,9 @@ export class QueueService implements OnModuleInit {
 
   constructor(
     private prisma: PrismaService,
-    private aiService: AiService
+    private aiService: AiService,
+    @Inject(forwardRef(() => StorageService)) private storageService: StorageService,
+    @Inject(forwardRef(() => ProcessingService)) private processingService: ProcessingService
   ) {}
 
   onModuleInit() {
@@ -53,6 +57,19 @@ export class QueueService implements OnModuleInit {
 
     this.queue.push(job);
     console.log(`[Queue] Enqueued job ${job.id}`);
+  }
+
+  async enqueueGarmentProcessing(mediaId: string) {
+    const job: Job = {
+      id: `process-${mediaId}-${Date.now()}`,
+      type: 'process_garment_image',
+      data: { mediaId },
+      retries: 0,
+      maxRetries: 2, // Fewer retries for expensive processing
+    };
+
+    this.queue.push(job);
+    console.log(`[Queue] Enqueued garment processing job ${job.id}`);
   }
 
   private async processQueue() {
@@ -94,6 +111,9 @@ export class QueueService implements OnModuleInit {
         break;
       case 'generate_item_embedding':
         await this.generateItemEmbedding(job.data.itemId);
+        break;
+      case 'process_garment_image':
+        await this.processGarmentImage(job.data.mediaId);
         break;
       default:
         console.warn(`[Queue] Unknown job type: ${job.type}`);
@@ -155,6 +175,98 @@ export class QueueService implements OnModuleInit {
     `;
 
     console.log(`[Queue] Generated embedding for item ${itemId}`);
+  }
+
+  private async processGarmentImage(mediaId: string) {
+    console.log(`[Queue] Processing garment image ${mediaId}`);
+
+    // Update status to processing
+    await this.prisma.mediaUpload.update({
+      where: { id: mediaId },
+      data: { status: 'processing' },
+    });
+
+    try {
+      // Get media upload record
+      const media = await this.prisma.mediaUpload.findUnique({
+        where: { id: mediaId },
+      });
+
+      if (!media || !media.originalUrl) {
+        throw new Error(`Media ${mediaId} not found or has no original URL`);
+      }
+
+      // Download original image from S3
+      const key = this.storageService.extractKeyFromUrl(media.originalUrl);
+      if (!key) {
+        throw new Error(`Could not extract key from URL: ${media.originalUrl}`);
+      }
+
+      const originalBuffer = await this.storageService.downloadFile(key);
+      console.log(`[Queue] Downloaded original image, size: ${originalBuffer.length} bytes`);
+
+      // Process the image
+      const result = await this.processingService.processGarmentImage(originalBuffer);
+      console.log(`[Queue] Image processed successfully`);
+
+      // Upload processed and thumbnail images
+      const processedUrl = await this.storageService.uploadBuffer(
+        media.userId,
+        mediaId,
+        result.processedBuffer,
+        'image/png',
+        'processed',
+        'garment'
+      );
+
+      const thumbnailUrl = await this.storageService.uploadBuffer(
+        media.userId,
+        mediaId,
+        result.thumbnailBuffer,
+        'image/jpeg',
+        'thumbnail',
+        'garment'
+      );
+
+      console.log(`[Queue] Uploaded processed and thumbnail images`);
+
+      // Update media upload with results
+      await this.prisma.mediaUpload.update({
+        where: { id: mediaId },
+        data: {
+          status: 'ready',
+          processedUrl,
+          thumbnailUrl,
+          metadata: {
+            dominantColors: result.dominantColors,
+            dominantHex: result.dominantHex,
+            detectedCategory: result.detectedCategory,
+            confidence: result.confidence,
+            detectedPattern: result.detectedPattern,
+            detectedMaterial: result.detectedMaterial,
+            detectedTags: result.detectedTags,
+          },
+        },
+      });
+
+      console.log(`[Queue] Media ${mediaId} processing complete`);
+    } catch (error) {
+      console.error(`[Queue] Failed to process media ${mediaId}:`, error);
+
+      // Update status to failed
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await this.prisma.mediaUpload.update({
+        where: { id: mediaId },
+        data: {
+          status: 'failed',
+          metadata: {
+            error: errorMessage,
+          },
+        },
+      });
+
+      throw error;
+    }
   }
 
   getQueueSize(): number {

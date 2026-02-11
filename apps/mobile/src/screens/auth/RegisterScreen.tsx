@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
+import { LineIcon } from '../../components/LineIcon';
 
 export function RegisterScreen() {
   const navigation = useNavigation();
@@ -79,14 +80,13 @@ export function RegisterScreen() {
               ]}
               onPress={() => setAccountType('user')}
             >
-              <Text
+              <LineIcon
+                name="profile"
                 style={[
                   styles.accountTypeText,
                   accountType === 'user' && styles.accountTypeTextActive,
                 ]}
-              >
-                Fashion Lover
-              </Text>
+              />
             </TouchableOpacity>
             <TouchableOpacity
               style={[
@@ -95,14 +95,13 @@ export function RegisterScreen() {
               ]}
               onPress={() => setAccountType('creator')}
             >
-              <Text
+              <LineIcon
+                name="spark"
                 style={[
                   styles.accountTypeText,
                   accountType === 'creator' && styles.accountTypeTextActive,
                 ]}
-              >
-                Creator
-              </Text>
+              />
             </TouchableOpacity>
           </View>
         </View>
@@ -115,7 +114,7 @@ export function RegisterScreen() {
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>Sign Up</Text>
+            <LineIcon name="check" style={styles.buttonText} />
           )}
         </TouchableOpacity>
 
@@ -123,7 +122,7 @@ export function RegisterScreen() {
           onPress={() => navigation.goBack()}
           style={styles.linkButton}
         >
-          <Text style={styles.linkText}>Already have an account? Log in</Text>
+          <LineIcon name="back" style={styles.linkText} />
         </TouchableOpacity>
       </View>
     </View>

@@ -8,6 +8,28 @@ import {
   TrackEventInput,
   UserProfile,
   CreateReportInput,
+  PresignedUploadRequest,
+  PresignedUploadResponse,
+  MediaStatusResponse,
+  CreateUserGarment,
+  UserGarment,
+  ListUserGarmentsResponse,
+  UpdateUserGarment,
+  CreateUserPost,
+  UserPost,
+  ListUserPostsResponse,
+  StyleProfileInput,
+  StyleProfileResponse,
+  GenerateOutfitsInput,
+  GenerateOutfitsResponse,
+  PersonalizedExploreFeedResponse,
+  BuilderWardrobeItemSource,
+  CreateOutfitInput,
+  CreatedOutfit,
+  GetBuilderWardrobeResponse,
+  ListCreatedOutfitsResponse,
+  RenderOutfitResponse,
+  UpdateOutfitInput,
 } from '@fashion/shared';
 import { getToken, setToken, clearToken } from './storage';
 
@@ -76,6 +98,15 @@ class ApiClient {
     });
 
     return this.request<FeedResponse>(`/feed?${params}`);
+  }
+
+  async getExploreFeed(limit: number = 20, cursor?: string): Promise<PersonalizedExploreFeedResponse> {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      ...(cursor && { cursor }),
+    });
+
+    return this.request<PersonalizedExploreFeedResponse>(`/explore/feed?${params}`);
   }
 
   async likePost(postId: string): Promise<{ success: boolean }> {
@@ -151,6 +182,15 @@ class ApiClient {
     return this.request<FeedResponse>(`/users/${userId}/posts?${params}`);
   }
 
+  async getUserLikedPosts(userId: string, limit: number = 20, cursor?: string): Promise<FeedResponse> {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      ...(cursor && { cursor }),
+    });
+
+    return this.request<FeedResponse>(`/users/${userId}/liked-posts?${params}`);
+  }
+
   async followUser(userId: string): Promise<{ success: boolean }> {
     return this.request(`/users/${userId}/follow`, {
       method: 'POST',
@@ -213,6 +253,182 @@ class ApiClient {
     });
 
     return this.request(`/search/suggestions?${params}`);
+  }
+
+  // ===== UPLOADS =====
+
+  async createPresignedUpload(data: PresignedUploadRequest): Promise<PresignedUploadResponse> {
+    return this.request('/uploads/presign', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async uploadToS3(uploadUrl: string, file: Blob, contentType: string): Promise<void> {
+    const response = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': contentType,
+      },
+      body: file,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.status}`);
+    }
+  }
+
+  async markUploadComplete(mediaId: string, publicUrl: string): Promise<{ success: boolean }> {
+    return this.request(`/uploads/${mediaId}/complete`, {
+      method: 'PATCH',
+      body: JSON.stringify({ publicUrl }),
+    });
+  }
+
+  async getMediaStatus(mediaId: string): Promise<MediaStatusResponse> {
+    return this.request(`/uploads/${mediaId}/status`);
+  }
+
+  // ===== STYLE PROFILE =====
+
+  async getStyleProfile(): Promise<StyleProfileResponse> {
+    return this.request<StyleProfileResponse>('/style-profile');
+  }
+
+  async saveStyleProfile(data: StyleProfileInput): Promise<StyleProfileResponse> {
+    return this.request<StyleProfileResponse>('/style-profile', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ===== USER GARMENTS =====
+
+  async createUserGarment(data: CreateUserGarment): Promise<UserGarment> {
+    return this.request('/user-garments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listUserGarments(category?: string, limit?: number): Promise<ListUserGarmentsResponse> {
+    const params = new URLSearchParams({
+      ...(category && { category }),
+      ...(limit && { limit: limit.toString() }),
+    });
+
+    const queryString = params.toString();
+    return this.request(`/user-garments${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async getUserGarment(garmentId: string): Promise<UserGarment> {
+    return this.request(`/user-garments/${garmentId}`);
+  }
+
+  async updateUserGarment(garmentId: string, data: UpdateUserGarment): Promise<UserGarment> {
+    return this.request(`/user-garments/${garmentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteUserGarment(garmentId: string): Promise<{ success: boolean }> {
+    return this.request(`/user-garments/${garmentId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ===== OUTFIT RECOMMENDATIONS =====
+
+  async generateOutfits(data: GenerateOutfitsInput): Promise<GenerateOutfitsResponse> {
+    return this.request<GenerateOutfitsResponse>('/outfits/generate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listSavedOutfits(): Promise<ListCreatedOutfitsResponse> {
+    return this.request<ListCreatedOutfitsResponse>('/outfits', {
+      method: 'GET',
+    });
+  }
+
+  async listRecommendedOutfits(): Promise<{ outfits: any[] }> {
+    return this.request<{ outfits: any[] }>('/outfits?kind=recommended', {
+      method: 'GET',
+    });
+  }
+
+  async getBuilderWardrobe(
+    filter?: string,
+    source?: BuilderWardrobeItemSource | 'all',
+  ): Promise<GetBuilderWardrobeResponse> {
+    const params = new URLSearchParams({
+      mode: 'builder',
+      ...(filter && { filter }),
+      ...(source && { source }),
+    });
+    return this.request<GetBuilderWardrobeResponse>(`/wardrobe?${params}`);
+  }
+
+  async createOutfit(data: CreateOutfitInput): Promise<CreatedOutfit> {
+    return this.request<CreatedOutfit>('/outfits', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getOutfit(outfitId: string): Promise<CreatedOutfit> {
+    return this.request<CreatedOutfit>(`/outfits/${outfitId}`);
+  }
+
+  async updateOutfit(outfitId: string, data: UpdateOutfitInput): Promise<CreatedOutfit> {
+    return this.request<CreatedOutfit>(`/outfits/${outfitId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteOutfit(outfitId: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/outfits/${outfitId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async renderOutfit(outfitId: string): Promise<RenderOutfitResponse> {
+    return this.request<RenderOutfitResponse>(`/outfits/${outfitId}/render`, {
+      method: 'POST',
+    });
+  }
+
+  // ===== USER POSTS =====
+
+  async createUserPost(data: CreateUserPost): Promise<UserPost> {
+    return this.request('/user-posts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listUserPosts(userId?: string, limit?: number, cursor?: string): Promise<ListUserPostsResponse> {
+    const params = new URLSearchParams({
+      ...(userId && { userId }),
+      ...(limit && { limit: limit.toString() }),
+      ...(cursor && { cursor }),
+    });
+
+    const queryString = params.toString();
+    return this.request(`/user-posts${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async getUserPost(postId: string): Promise<UserPost> {
+    return this.request(`/user-posts/${postId}`);
+  }
+
+  async deleteUserPost(postId: string): Promise<{ success: boolean }> {
+    return this.request(`/user-posts/${postId}`, {
+      method: 'DELETE',
+    });
   }
 }
 

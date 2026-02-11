@@ -1,7 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { ActivityIndicator, View } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../services/api';
+import { getOnboardingSkipped } from '../services/storage';
 import { LoginScreen } from '../screens/auth/LoginScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
 import { ExploreScreen } from '../screens/tabs/ExploreScreen';
@@ -11,7 +14,15 @@ import { PostDetailScreen } from '../screens/PostDetailScreen';
 import { UserProfileScreen } from '../screens/UserProfileScreen';
 import { OutfitBuilderScreen } from '../screens/OutfitBuilderScreen';
 import { SearchScreen } from '../screens/SearchScreen';
+import { UploadGarmentScreen } from '../screens/UploadGarmentScreen';
+import { MyGarmentsScreen } from '../screens/MyGarmentsScreen';
+import { GarmentDetailScreen } from '../screens/GarmentDetailScreen';
+import { GarmentConfirmationScreen } from '../screens/GarmentConfirmationScreen';
+import { CreatePostScreen } from '../screens/CreatePostScreen';
+import { StyleOnboardingScreen } from '../screens/StyleOnboardingScreen';
 import { RootStackParamList, AuthStackParamList, MainTabParamList } from './types';
+import { useAppTheme } from '../theme';
+import { LineIcon } from '../components/LineIcon';
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -27,13 +38,44 @@ function AuthNavigator() {
 }
 
 function MainNavigator() {
+  const { theme } = useAppTheme();
+
   return (
     <MainTab.Navigator
-      screenOptions={{
-        tabBarActiveTintColor: '#000',
-        tabBarInactiveTintColor: '#666',
+      screenOptions={({ route }) => ({
+        tabBarActiveTintColor: theme.colors.tint,
+        tabBarInactiveTintColor: theme.colors.textTertiary,
         headerShown: true,
-      }}
+        headerStyle: {
+          backgroundColor: theme.colors.surface,
+        },
+        headerTintColor: theme.colors.textPrimary,
+        headerTitleStyle: {
+          color: theme.colors.textPrimary,
+          fontWeight: '600',
+        },
+        tabBarStyle: {
+          backgroundColor: theme.colors.surface,
+          borderTopColor: theme.colors.border,
+          height: 64,
+          paddingTop: 4,
+        },
+        tabBarShowLabel: false,
+        sceneContainerStyle: {
+          backgroundColor: theme.colors.background,
+        },
+        tabBarIcon: ({ color, size }) => {
+          if (route.name === 'Explore') {
+            return <LineIcon name="search" size={size} color={color} />;
+          }
+
+          if (route.name === 'Wardrobe') {
+            return <LineIcon name="wardrobe" size={size} color={color} />;
+          }
+
+          return <LineIcon name="profile" size={size} color={color} />;
+        },
+      })}
     >
       <MainTab.Screen
         name="Explore"
@@ -56,21 +98,109 @@ function MainNavigator() {
 
 export function RootNavigator() {
   const { user, loading } = useAuth();
+  const { theme } = useAppTheme();
+  const [checkingOnboarding, setCheckingOnboarding] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
-  if (loading) return null;
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadOnboardingState() {
+      if (!user?.id) {
+        if (mounted) {
+          setNeedsOnboarding(false);
+          setCheckingOnboarding(false);
+        }
+        return;
+      }
+
+      try {
+        setCheckingOnboarding(true);
+        const [styleProfileResponse, skipped] = await Promise.all([
+          api.getStyleProfile(),
+          getOnboardingSkipped(user.id),
+        ]);
+
+        if (mounted) {
+          setNeedsOnboarding(!styleProfileResponse.profile && !skipped);
+        }
+      } catch (error) {
+        console.error('[RootNavigator] Failed to check onboarding status:', error);
+        if (mounted) {
+          setNeedsOnboarding(false);
+        }
+      } finally {
+        if (mounted) {
+          setCheckingOnboarding(false);
+        }
+      }
+    }
+
+    loadOnboardingState();
+
+    return () => {
+      mounted = false;
+    };
+  }, [user?.id]);
+
+  if (loading || (user && checkingOnboarding)) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.background,
+        }}
+      >
+        <ActivityIndicator size="large" color={theme.colors.tint} />
+      </View>
+    );
+  }
 
   return (
-    <RootStack.Navigator screenOptions={{ headerShown: false }}>
+    <RootStack.Navigator
+      screenOptions={{
+        headerShown: false,
+        animation: 'slide_from_right',
+        customAnimationOnGesture: true,
+        fullScreenGestureEnabled: true,
+      }}
+    >
       {user ? (
         <>
-          <RootStack.Screen name="Main" component={MainNavigator} />
+          {needsOnboarding ? (
+            <>
+              <RootStack.Screen
+                name="Onboarding"
+                component={StyleOnboardingScreen}
+                initialParams={{ mode: 'first_time' }}
+                options={{ headerShown: false }}
+              />
+              <RootStack.Screen name="Main" component={MainNavigator} />
+            </>
+          ) : (
+            <>
+              <RootStack.Screen name="Main" component={MainNavigator} />
+              <RootStack.Screen
+                name="Onboarding"
+                component={StyleOnboardingScreen}
+                initialParams={{ mode: 'edit' }}
+                options={{
+                  headerShown: false,
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  animationDuration: 500, // Slower, premium modal
+                }}
+              />
+            </>
+          )}
           <RootStack.Screen
             name="PostDetail"
             component={PostDetailScreen}
             options={{
-              headerShown: true,
-              title: 'Post',
-              headerBackTitle: 'Back',
+              headerShown: false,
+              presentation: 'modal',
             }}
           />
           <RootStack.Screen
@@ -91,6 +221,7 @@ export function RootNavigator() {
               headerBackTitle: 'Back',
               presentation: 'modal',
               animation: 'slide_from_bottom',
+              animationDuration: 500, // Slower, smoother modal
             }}
           />
           <RootStack.Screen
@@ -99,6 +230,53 @@ export function RootNavigator() {
             options={{
               headerShown: false,
               animation: 'fade',
+              animationDuration: 400, // Slower fade
+            }}
+          />
+          <RootStack.Screen
+            name="UploadGarment"
+            component={UploadGarmentScreen}
+            options={{
+              headerShown: true,
+              title: 'Add Garment',
+              headerBackTitle: 'Back',
+            }}
+          />
+          <RootStack.Screen
+            name="MyGarments"
+            component={MyGarmentsScreen}
+            options={{
+              headerShown: true,
+              title: 'My Wardrobe',
+              headerBackTitle: 'Back',
+            }}
+          />
+          <RootStack.Screen
+            name="GarmentDetail"
+            component={GarmentDetailScreen}
+            options={{
+              headerShown: true,
+              title: 'Garment Details',
+              headerBackTitle: 'Back',
+            }}
+          />
+          <RootStack.Screen
+            name="GarmentConfirmation"
+            component={GarmentConfirmationScreen}
+            options={{
+              headerShown: true,
+              title: 'Confirm Details',
+              headerBackTitle: 'Back',
+            }}
+          />
+          <RootStack.Screen
+            name="CreatePost"
+            component={CreatePostScreen}
+            options={{
+              headerShown: false,
+              presentation: 'modal',
+              animation: 'slide_from_bottom',
+              animationDuration: 500, // Slower, premium modal
             }}
           />
         </>

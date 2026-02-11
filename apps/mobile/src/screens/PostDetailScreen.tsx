@@ -1,491 +1,519 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  ScrollView,
-  Image,
-  Text,
-  TouchableOpacity,
   ActivityIndicator,
-  StyleSheet,
-  useWindowDimensions,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
   Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { ClothingItem, Post } from '@fashion/shared';
 import { RootStackParamList } from '../navigation/types';
 import { api } from '../services/api';
-import { Post, ClothingItem } from '@fashion/shared';
+import { useAuth } from '../contexts/AuthContext';
+import { useAppTheme } from '../theme';
+import { LineIcon } from '../components/LineIcon';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PostDetail'>;
 
-export function PostDetailScreen({ route }: Props) {
+const FALLBACK_HERO_RATIO = 1.3;
+
+export function PostDetailScreen({ route, navigation }: Props) {
   const { postId } = route.params;
+  const { theme } = useAppTheme();
+  const { user } = useAuth();
   const { width } = useWindowDimensions();
+
   const [post, setPost] = useState<Post | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaved, setIsSaved] = useState(false);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [showTaggedItems, setShowTaggedItems] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+  const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    loadPost();
-    trackView();
-  }, [postId]);
+  const heroHeight = Math.round(width * FALLBACK_HERO_RATIO);
+  const heroImageUri = post?.imageUrls[0] ?? null;
 
-  useEffect(() => {
-    if (post) {
-      setIsSaved(post.isSavedByMe || false);
-    }
-  }, [post]);
-
-  const loadPost = async () => {
+  const loadPost = useCallback(async () => {
     try {
       setLoading(true);
       const data = await api.getPost(postId);
       setPost(data);
+      setIsSaved(Boolean(data.isSavedByMe));
       setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load post');
+
+      if (data.creator.id !== user?.id) {
+        const creatorProfile = await api.getUserProfile(data.creator.id);
+        setIsFollowing(creatorProfile.isFollowedByMe);
+      }
+    } catch (loadError) {
+      console.error('Failed to load post detail:', loadError);
+      setError(loadError instanceof Error ? loadError.message : 'Failed to load post');
     } finally {
       setLoading(false);
     }
-  };
+  }, [postId, user?.id]);
 
-  const trackView = async () => {
+  useEffect(() => {
+    loadPost();
+    api.trackEvent({ eventName: 'post_viewed', properties: { postId } }).catch(console.error);
+  }, [loadPost, postId]);
+
+  const handleLike = useCallback(async () => {
+    if (!post) return;
+
+    const previousLiked = post.isLikedByMe;
+    const previousLikeCount = post.likeCount;
+    setPost({ ...post, isLikedByMe: !previousLiked, likeCount: previousLikeCount + (previousLiked ? -1 : 1) });
+
     try {
-      await api.trackEvent({
-        eventName: 'post_viewed',
-        properties: { postId },
-      });
-    } catch (err) {
-      console.error('Failed to track view:', err);
+      if (previousLiked) {
+        await api.unlikePost(post.id);
+      } else {
+        await api.likePost(post.id);
+      }
+    } catch (likeError) {
+      console.error('Failed to update like status:', likeError);
+      setPost({ ...post, isLikedByMe: previousLiked, likeCount: previousLikeCount });
     }
-  };
+  }, [post]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!post) return;
 
     try {
       if (isSaved) {
         await api.unsavePost(post.id);
         setIsSaved(false);
-        await api.trackEvent({
-          eventName: 'post_unsaved',
-          properties: { postId: post.id },
-        });
       } else {
         await api.savePost(post.id);
         setIsSaved(true);
-        await api.trackEvent({
-          eventName: 'post_saved',
-          properties: { postId: post.id },
-        });
-
-        // Show success message
-        const itemCount = post.clothingItems?.length || 0;
+        const itemCount = post.clothingItems?.length ?? 0;
         if (itemCount > 0) {
-          Alert.alert(
-            'Saved!',
-            `Post saved and ${itemCount} item${itemCount !== 1 ? 's' : ''} added to your wardrobe.`,
-            [{ text: 'OK' }]
-          );
+          Alert.alert('Saved', `Post saved and ${itemCount} tagged item${itemCount === 1 ? '' : 's'} added to your wardrobe.`);
         }
       }
-    } catch (err) {
-      console.error('Failed to save/unsave post:', err);
-      Alert.alert('Error', 'Failed to save post. Please try again.');
+    } catch (saveError) {
+      console.error('Failed to save post:', saveError);
+      Alert.alert('Error', 'Could not update save status.');
     }
-  };
+  }, [isSaved, post]);
 
-  const handleLike = async () => {
+  const handleShare = useCallback(async () => {
     if (!post) return;
-
     try {
-      const newLikedState = !post.isLikedByMe;
-      setPost({
-        ...post,
-        isLikedByMe: newLikedState,
-        likeCount: post.likeCount + (newLikedState ? 1 : -1),
+      await Share.share({
+        message: post.caption ? `${post.caption}\n\n${post.imageUrls[0]}` : post.imageUrls[0],
+        url: post.imageUrls[0],
       });
+    } catch (shareError) {
+      console.error('Failed to share post:', shareError);
+    }
+  }, [post]);
 
-      if (newLikedState) {
-        await api.likePost(post.id);
+  const handleCreatorPress = useCallback(() => {
+    if (!post) return;
+    navigation.replace('UserProfile', { userId: post.creator.id });
+  }, [navigation, post]);
+
+  const handleFollowToggle = useCallback(async () => {
+    if (!post || followLoading || post.creator.id === user?.id) return;
+
+    setFollowLoading(true);
+    try {
+      if (isFollowing) {
+        await api.unfollowUser(post.creator.id);
+        setIsFollowing(false);
       } else {
-        await api.unlikePost(post.id);
+        await api.followUser(post.creator.id);
+        setIsFollowing(true);
       }
-    } catch (err) {
-      console.error('Failed to like/unlike:', err);
-      setPost({
-        ...post,
-        isLikedByMe: !post.isLikedByMe,
-        likeCount: post.likeCount + (post.isLikedByMe ? 1 : -1),
-      });
+    } catch (followError) {
+      console.error('Failed to update follow state:', followError);
+      Alert.alert('Error', 'Could not update follow state.');
+    } finally {
+      setFollowLoading(false);
     }
-  };
+  }, [followLoading, isFollowing, post, user?.id]);
 
-  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const contentOffsetX = event.nativeEvent.contentOffset.x;
-    const index = Math.round(contentOffsetX / width);
-    setCurrentImageIndex(index);
-  };
+  const handleAddTaggedItem = useCallback(
+    async (item: ClothingItem) => {
+      if (addedItems[item.id]) return;
+      try {
+        await api.addToWardrobe(item.id);
+        setAddedItems((previous) => ({ ...previous, [item.id]: true }));
+      } catch (addError) {
+        console.error('Failed to add tagged item:', addError);
+        Alert.alert('Error', 'Could not add this item to your wardrobe.');
+      }
+    },
+    [addedItems],
+  );
 
-  if (loading) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#000" />
-      </View>
-    );
-  }
-
-  if (error || !post) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>{error || 'Post not found'}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadPost}>
-          <Text style={styles.retryText}>Retry</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  const itemsForCurrentImage = post.clothingItems?.filter(
-    (item) => item.imageIndex === currentImageIndex
-  ) || [];
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: {
+          flex: 1,
+          backgroundColor: theme.colors.background,
+        },
+        scroll: {
+          flex: 1,
+        },
+        topBar: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+        },
+        backButton: {
+          width: 38,
+          height: 38,
+          borderRadius: 19,
+          backgroundColor: theme.colors.overlay,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        backIcon: {
+          color: '#ffffff',
+          fontSize: 24,
+          fontWeight: '700',
+        },
+        heroFrame: {
+          width: '100%',
+          height: heroHeight,
+          backgroundColor: theme.colors.surfaceMuted,
+        },
+        heroImage: {
+          width: '100%',
+          height: '100%',
+        },
+        body: {
+          paddingTop: 16,
+          paddingHorizontal: 16,
+          paddingBottom: 40,
+        },
+        section: {
+          backgroundColor: theme.colors.surface,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          padding: 14,
+          marginBottom: 12,
+        },
+        loadingWrap: {
+          paddingVertical: 40,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        creatorHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          marginBottom: 12,
+        },
+        creatorPressable: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          flex: 1,
+        },
+        avatar: {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: theme.colors.surfaceMuted,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        avatarFallbackText: {
+          color: theme.colors.textPrimary,
+          fontSize: 16,
+          fontWeight: '700',
+        },
+        creatorName: {
+          color: theme.colors.textPrimary,
+          fontSize: 16,
+          fontWeight: '700',
+        },
+        creatorMeta: {
+          color: theme.colors.textSecondary,
+          fontSize: 13,
+          marginTop: 2,
+        },
+        followButton: {
+          borderRadius: 18,
+          width: 36,
+          height: 36,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surfaceElevated,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        followButtonActive: {
+          backgroundColor: theme.colors.tint,
+          borderColor: theme.colors.tint,
+        },
+        followText: {
+          color: theme.colors.textPrimary,
+          fontSize: 18,
+          fontWeight: '600',
+        },
+        followTextActive: {
+          color: '#ffffff',
+        },
+        actionsRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 12,
+        },
+        actionButton: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 5,
+          borderRadius: 20,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surfaceElevated,
+          paddingHorizontal: 11,
+          paddingVertical: 8,
+        },
+        actionIcon: {
+          fontSize: 16,
+        },
+        actionText: {
+          color: theme.colors.textPrimary,
+          fontSize: 13,
+          fontWeight: '600',
+        },
+        caption: {
+          color: theme.colors.textPrimary,
+          fontSize: 15,
+          lineHeight: 22,
+        },
+        tagsRow: {
+          marginTop: 12,
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 8,
+        },
+        tagPill: {
+          borderRadius: 20,
+          backgroundColor: theme.colors.surfaceMuted,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+        },
+        tagText: {
+          color: theme.colors.textSecondary,
+          fontSize: 12,
+          fontWeight: '600',
+        },
+        sectionTitle: {
+          color: theme.colors.textPrimary,
+          fontSize: 15,
+          fontWeight: '700',
+          marginBottom: 12,
+        },
+        taggedItem: {
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          borderRadius: 8,
+          backgroundColor: theme.colors.surfaceElevated,
+          padding: 12,
+          marginBottom: 10,
+        },
+        taggedTopRow: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 10,
+        },
+        taggedName: {
+          color: theme.colors.textPrimary,
+          fontSize: 14,
+          fontWeight: '600',
+          flex: 1,
+        },
+        taggedMeta: {
+          color: theme.colors.textSecondary,
+          fontSize: 12,
+          marginTop: 4,
+        },
+        addButton: {
+          borderRadius: 20,
+          backgroundColor: theme.colors.tint,
+          width: 32,
+          height: 32,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        addButtonDone: {
+          backgroundColor: theme.colors.success,
+        },
+        addButtonText: {
+          color: '#ffffff',
+          fontSize: 16,
+          fontWeight: '700',
+        },
+        commentsText: {
+          color: theme.colors.textSecondary,
+          fontSize: 14,
+        },
+        errorText: {
+          color: theme.colors.danger,
+          fontSize: 14,
+          marginBottom: 12,
+        },
+        retryButton: {
+          borderRadius: 20,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          paddingHorizontal: 16,
+          paddingVertical: 9,
+          backgroundColor: theme.colors.surfaceElevated,
+          alignSelf: 'flex-start',
+        },
+        retryText: {
+          color: theme.colors.textPrimary,
+          fontWeight: '600',
+          fontSize: 16,
+        },
+      }),
+    [heroHeight, theme],
+  );
 
   return (
-    <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Image Carousel */}
-        <View>
-          <ScrollView
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-          >
-            {post.imageUrls.map((url, index) => (
-              <Image
-                key={index}
-                source={{ uri: url }}
-                style={{ width, height: width * 1.2 }}
-                resizeMode="cover"
-              />
-            ))}
-          </ScrollView>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <View style={styles.topBar}>
+        <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
+          <LineIcon name="close" style={styles.backIcon} />
+        </Pressable>
+      </View>
 
-          {/* Pagination Dots */}
-          {post.imageUrls.length > 1 && (
-            <View style={styles.paginationContainer}>
-              {post.imageUrls.map((_, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.paginationDot,
-                    index === currentImageIndex && styles.paginationDotActive,
-                  ]}
-                />
-              ))}
-            </View>
-          )}
-
-          {/* Tagged Items Button */}
-          {itemsForCurrentImage.length > 0 && (
-            <TouchableOpacity
-              style={styles.taggedButton}
-              onPress={() => setShowTaggedItems(!showTaggedItems)}
-            >
-              <Text style={styles.taggedButtonText}>
-                🏷️ {itemsForCurrentImage.length} item{itemsForCurrentImage.length !== 1 ? 's' : ''}
-              </Text>
-            </TouchableOpacity>
-          )}
+      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.heroFrame}>
+          {heroImageUri ? <Image source={{ uri: heroImageUri }} style={styles.heroImage} resizeMode="cover" /> : null}
         </View>
 
-        {/* Post Info */}
-        <View style={styles.infoContainer}>
-          {/* Creator */}
-          <View style={styles.creatorRow}>
-            <Image
-              source={{ uri: post.creator.avatarUrl || 'https://via.placeholder.com/40' }}
-              style={styles.avatar}
-            />
-            <Text style={styles.creatorName}>{post.creator.displayName}</Text>
-            {post.creator.accountType === 'creator' && (
-              <View style={styles.brandBadge}>
-                <Text style={styles.brandBadgeText}>Creator</Text>
-              </View>
-            )}
-          </View>
+        <View style={styles.body}>
+          {loading ? (
+            <View style={[styles.section, styles.loadingWrap]}>
+              <ActivityIndicator size="small" color={theme.colors.tint} />
+            </View>
+          ) : error ? (
+            <View style={styles.section}>
+              <Text style={styles.errorText}>{error}</Text>
+              <Pressable style={styles.retryButton} onPress={loadPost}>
+                <LineIcon name="refresh" style={styles.retryText} />
+              </Pressable>
+            </View>
+          ) : post ? (
+            <>
+              <View style={styles.section}>
+                <View style={styles.creatorHeader}>
+                  <Pressable style={styles.creatorPressable} onPress={handleCreatorPress}>
+                    {post.creator.avatarUrl ? (
+                      <Image source={{ uri: post.creator.avatarUrl }} style={styles.avatar} />
+                    ) : (
+                      <View style={styles.avatar}>
+                        <Text style={styles.avatarFallbackText}>{post.creator.displayName.charAt(0).toUpperCase()}</Text>
+                      </View>
+                    )}
+                    <View>
+                      <Text style={styles.creatorName}>{post.creator.displayName}</Text>
+                      <Text style={styles.creatorMeta}>{post.creator.accountType}</Text>
+                    </View>
+                  </Pressable>
 
-          {/* Actions */}
-          <View style={styles.actionsRow}>
-            <TouchableOpacity style={styles.actionButton} onPress={handleLike}>
-              <Text style={styles.actionIcon}>{post.isLikedByMe ? '❤️' : '🤍'}</Text>
-              <Text style={styles.actionText}>{post.likeCount}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={handleSave}>
-              <Text style={styles.actionIcon}>{isSaved ? '🔖' : '📑'}</Text>
-              <Text style={styles.actionText}>{isSaved ? 'Saved' : 'Save'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Caption */}
-          {post.caption && (
-            <Text style={styles.caption}>{post.caption}</Text>
-          )}
-
-          {/* Tags */}
-          {post.tags.length > 0 && (
-            <View style={styles.tagsContainer}>
-              {post.tags.map((tag, index) => (
-                <View key={index} style={styles.tag}>
-                  <Text style={styles.tagText}>#{tag}</Text>
+                  {post.creator.id !== user?.id && (
+                    <Pressable
+                      style={[styles.followButton, isFollowing && styles.followButtonActive]}
+                      onPress={handleFollowToggle}
+                      disabled={followLoading}
+                    >
+                      <LineIcon
+                        name={isFollowing ? 'following' : 'follow'}
+                        style={[styles.followText, isFollowing && styles.followTextActive]}
+                      />
+                    </Pressable>
+                  )}
                 </View>
-              ))}
-            </View>
-          )}
+
+                <View style={styles.actionsRow}>
+                  <Pressable style={styles.actionButton} onPress={handleLike}>
+                    <LineIcon name={post.isLikedByMe ? 'heartFilled' : 'heart'} style={styles.actionIcon} />
+                    <Text style={styles.actionText}>{post.likeCount}</Text>
+                  </Pressable>
+
+                  <Pressable style={styles.actionButton} onPress={handleSave}>
+                    <LineIcon name={isSaved ? 'bookmarkFilled' : 'bookmark'} style={styles.actionIcon} />
+                  </Pressable>
+
+                  <Pressable style={styles.actionButton} onPress={handleShare}>
+                    <LineIcon name="share" style={styles.actionIcon} />
+                  </Pressable>
+                </View>
+
+                {post.caption && <Text style={styles.caption}>{post.caption}</Text>}
+                {post.tags.length > 0 && (
+                  <View style={styles.tagsRow}>
+                    {post.tags.map((tag) => (
+                      <View key={tag} style={styles.tagPill}>
+                        <Text style={styles.tagText}>#{tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+
+              {post.clothingItems && post.clothingItems.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Tagged Clothes</Text>
+                  {post.clothingItems.map((item) => (
+                    <View style={styles.taggedItem} key={item.id}>
+                      <View style={styles.taggedTopRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.taggedName}>{item.name ?? item.brand ?? 'Tagged piece'}</Text>
+                          <Text style={styles.taggedMeta}>
+                            {[item.category, item.color].filter(Boolean).join(' • ') || 'No details'}
+                          </Text>
+                        </View>
+                        <Pressable
+                          style={[styles.addButton, addedItems[item.id] && styles.addButtonDone]}
+                          onPress={() => handleAddTaggedItem(item)}
+                          disabled={addedItems[item.id]}
+                        >
+                          <LineIcon
+                            name={addedItems[item.id] ? 'check' : 'plus'}
+                            style={styles.addButtonText}
+                          />
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Comments</Text>
+                <Text style={styles.commentsText}>
+                  Comment threads are rolling out. For now, save or share this look to keep track.
+                </Text>
+              </View>
+            </>
+          ) : null}
         </View>
-
-        {/* Tagged Items List */}
-        {showTaggedItems && itemsForCurrentImage.length > 0 && (
-          <View style={styles.taggedItemsContainer}>
-            <Text style={styles.taggedItemsTitle}>Tagged Items</Text>
-            {itemsForCurrentImage.map((item) => (
-              <TaggedItemCard key={item.id} item={item} />
-            ))}
-          </View>
-        )}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
-
-function TaggedItemCard({ item }: { item: ClothingItem }) {
-  const [addedToWardrobe, setAddedToWardrobe] = useState(false);
-
-  const handleAddToWardrobe = async () => {
-    try {
-      await api.addToWardrobe(item.id);
-      setAddedToWardrobe(true);
-      await api.trackEvent({
-        eventName: 'item_added_to_wardrobe',
-        properties: { clothingItemId: item.id, category: item.category },
-      });
-    } catch (err) {
-      console.error('Failed to add to wardrobe:', err);
-    }
-  };
-
-  return (
-    <View style={styles.itemCard}>
-      <View style={styles.itemInfo}>
-        {item.brand && <Text style={styles.itemBrand}>{item.brand}</Text>}
-        {item.name && <Text style={styles.itemName}>{item.name}</Text>}
-        {item.category && <Text style={styles.itemCategory}>{item.category}</Text>}
-        {item.price && <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>}
-        {item.color && (
-          <Text style={styles.itemDetail}>Color: {item.color}</Text>
-        )}
-      </View>
-      <TouchableOpacity
-        style={[styles.addButton, addedToWardrobe && styles.addButtonDisabled]}
-        onPress={handleAddToWardrobe}
-        disabled={addedToWardrobe}
-      >
-        <Text style={styles.addButtonText}>
-          {addedToWardrobe ? '✓ Added' : '+ Add to Wardrobe'}
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#999',
-    marginBottom: 16,
-  },
-  retryButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: '#000',
-    borderRadius: 8,
-  },
-  retryText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  paginationContainer: {
-    position: 'absolute',
-    bottom: 16,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  paginationDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
-  },
-  paginationDotActive: {
-    backgroundColor: '#fff',
-    width: 20,
-  },
-  taggedButton: {
-    position: 'absolute',
-    bottom: 16,
-    left: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  taggedButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  infoContainer: {
-    padding: 16,
-  },
-  creatorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  creatorName: {
-    fontSize: 16,
-    fontWeight: '600',
-    flex: 1,
-  },
-  brandBadge: {
-    backgroundColor: '#000',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  brandBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 16,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  actionIcon: {
-    fontSize: 24,
-  },
-  actionText: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  caption: {
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 12,
-  },
-  tagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  tag: {
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  tagText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  taggedItemsContainer: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  taggedItemsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 16,
-  },
-  itemCard: {
-    backgroundColor: '#f9f9f9',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  itemInfo: {
-    marginBottom: 12,
-  },
-  itemBrand: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  itemName: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  itemCategory: {
-    fontSize: 13,
-    color: '#666',
-    marginBottom: 4,
-  },
-  itemPrice: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#000',
-    marginBottom: 4,
-  },
-  itemDetail: {
-    fontSize: 13,
-    color: '#666',
-  },
-  addButton: {
-    backgroundColor: '#000',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  addButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  addButtonText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-});

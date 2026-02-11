@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 
 type PrismaMethod = (...args: any[]) => Promise<any>;
+type PrismaTransactionMethod = (...args: any[]) => Promise<any>;
 
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
@@ -15,8 +16,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   public readonly clothingItem: any;
   public readonly follow: any;
   public readonly report: any;
+  public readonly mediaUpload: any;
+  public readonly userGarment: any;
+  public readonly userPost: any;
+  public readonly userPostTag: any;
+  public readonly styleProfile: any;
+  public readonly outfit: any;
+  public readonly createdOutfit: any;
+  public readonly createdOutfitItem: any;
+  public readonly explorePost: any;
   public readonly $executeRaw: PrismaMethod;
   public readonly $queryRaw: PrismaMethod;
+  public readonly $transaction: PrismaTransactionMethod;
 
   constructor() {
     // Load Prisma at runtime so TypeScript doesn't depend on generated client types.
@@ -35,8 +46,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     this.clothingItem = this.client.clothingItem;
     this.follow = this.client.follow;
     this.report = this.client.report;
+    this.mediaUpload = this.client.mediaUpload;
+    this.userGarment = this.client.userGarment;
+    this.userPost = this.client.userPost;
+    this.userPostTag = this.client.userPostTag;
+    this.styleProfile = this.client.styleProfile;
+    this.outfit = this.client.outfit;
+    this.createdOutfit = this.client.createdOutfit;
+    this.createdOutfitItem = this.client.createdOutfitItem;
+    this.explorePost = this.client.explorePost;
     this.$executeRaw = this.client.$executeRaw.bind(this.client);
     this.$queryRaw = this.client.$queryRaw.bind(this.client);
+    this.$transaction = this.client.$transaction.bind(this.client);
   }
 
   async onModuleInit() {

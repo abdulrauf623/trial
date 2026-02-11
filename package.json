@@ -11,7 +11,7 @@
     "db:push": "pnpm --filter @fashion/api prisma:push",
     "db:studio": "pnpm --filter @fashion/api prisma:studio",
     "db:seed": "pnpm --filter @fashion/api seed",
-    "typecheck": "pnpm -r run typecheck",
+    "typecheck": "pnpm --filter @fashion/shared build && pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
     "test": "pnpm -r run test"
   },

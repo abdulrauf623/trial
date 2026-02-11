@@ -33,6 +33,21 @@ export class UsersController {
     );
   }
 
+  @Get(':userId/liked-posts')
+  async getLikedPosts(
+    @Param('userId') userId: string,
+    @Request() req: AuthRequest,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.usersService.getLikedPosts(
+      userId,
+      req.user.userId,
+      limit ? parseInt(limit) : 20,
+      cursor,
+    );
+  }
+
   @Post(':userId/follow')
   async followUser(@Param('userId') userId: string, @Request() req: AuthRequest) {
     await this.usersService.followUser(req.user.userId, userId);

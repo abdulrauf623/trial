@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BuilderWardrobeItem, BuilderWardrobeItemSource } from '@fashion/shared';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface WardrobeItem {
@@ -28,6 +29,105 @@ export interface WardrobeItem {
 @Injectable()
 export class WardrobeService {
   constructor(private prisma: PrismaService) {}
+
+  async getBuilderWardrobe(
+    userId: string,
+    filter?: string,
+    source?: BuilderWardrobeItemSource | 'all',
+  ): Promise<{ items: BuilderWardrobeItem[] }> {
+    const [userGarments, savedItems] = await Promise.all([
+      this.prisma.userGarment.findMany({
+        where: { userId },
+        include: { mediaUpload: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.wardrobeItem.findMany({
+        where: { userId },
+        include: {
+          clothingItem: {
+            include: {
+              post: {
+                select: {
+                  imageUrls: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const uploads = userGarments
+      .map((garment: any) => {
+        const originalUrl: string | null =
+          garment.mediaUpload?.originalUrl || garment.mediaUpload?.processedUrl || null;
+        const cutoutUrl: string | null =
+          garment.removedBgUrl ||
+          garment.mediaUpload?.processedUrl ||
+          garment.mediaUpload?.thumbnailUrl ||
+          originalUrl;
+
+        if (!originalUrl || !cutoutUrl) return null;
+
+        return {
+          id: `upload:${garment.id}`,
+          ownerUserId: userId,
+          sourceType: 'upload' as const,
+          sourceRefId: garment.id,
+          imageOriginalUrl: originalUrl,
+          imageCutoutUrl: cutoutUrl,
+          category: garment.category || 'other',
+          colors: Array.isArray(garment.colors) ? garment.colors : [],
+          brand: garment.brand || null,
+          createdAt: garment.createdAt.toISOString(),
+        } satisfies BuilderWardrobeItem;
+      })
+      .filter((item: BuilderWardrobeItem | null): item is BuilderWardrobeItem => Boolean(item));
+
+    const saved = savedItems
+      .map((item: any) => {
+        const snapshot = item.snapshot || {};
+        const clothingItem = item.clothingItem;
+        const imageIndex = snapshot.imageIndex ?? clothingItem?.imageIndex ?? 0;
+        const snapshotUrls = Array.isArray(snapshot.imageUrls) ? snapshot.imageUrls : [];
+        const postUrls = Array.isArray(clothingItem?.post?.imageUrls) ? clothingItem.post.imageUrls : [];
+        const imageOriginalUrl =
+          snapshotUrls[imageIndex] || postUrls[imageIndex] || postUrls[0] || snapshotUrls[0] || null;
+
+        if (!imageOriginalUrl) return null;
+
+        const color = snapshot.color || clothingItem?.color || null;
+        const colors = color ? [String(color).toLowerCase()] : [];
+
+        return {
+          id: `saved:${item.id}`,
+          ownerUserId: userId,
+          sourceType: 'saved_post' as const,
+          sourceRefId: clothingItem?.id || null,
+          imageOriginalUrl,
+          imageCutoutUrl: imageOriginalUrl,
+          category: snapshot.category || clothingItem?.category || 'other',
+          colors,
+          brand: snapshot.brand || clothingItem?.brand || null,
+          createdAt: item.createdAt.toISOString(),
+        } satisfies BuilderWardrobeItem;
+      })
+      .filter((item: BuilderWardrobeItem | null): item is BuilderWardrobeItem => Boolean(item));
+
+    const normalizedFilter = filter?.trim().toLowerCase();
+    const normalizedSource = source === 'all' ? undefined : source;
+
+    const items = [...uploads, ...saved]
+      .filter((item) => {
+        if (normalizedFilter && item.category.trim().toLowerCase() !== normalizedFilter) return false;
+        if (normalizedSource && item.sourceType !== normalizedSource) return false;
+        return true;
+      })
+      .sort((a, b) => (a.createdAt > b.createdAt ? -1 : 1));
+
+    return { items };
+  }
 
   async addToWardrobe(userId: string, clothingItemId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({

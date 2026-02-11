@@ -110,6 +110,21 @@ export class FeedService {
   }
 
   async likePost(userId: string, postId: string): Promise<void> {
+    // Check if like already exists
+    const existingLike = await this.prisma.like.findUnique({
+      where: {
+        userId_postId: {
+          userId,
+          postId,
+        },
+      },
+    });
+
+    // If already liked, return early (idempotent operation)
+    if (existingLike) {
+      return;
+    }
+
     await this.prisma.like.create({
       data: {
         userId,
@@ -121,6 +136,21 @@ export class FeedService {
   }
 
   async unlikePost(userId: string, postId: string): Promise<void> {
+    // Check if like exists before trying to delete
+    const existingLike = await this.prisma.like.findUnique({
+      where: {
+        userId_postId: {
+          userId,
+          postId,
+        },
+      },
+    });
+
+    // If not liked, return early (idempotent operation)
+    if (!existingLike) {
+      return;
+    }
+
     await this.prisma.like.delete({
       where: {
         userId_postId: {

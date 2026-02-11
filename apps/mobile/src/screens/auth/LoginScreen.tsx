@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
+import { LineIcon } from '../../components/LineIcon';
 
 export function LoginScreen() {
   const navigation = useNavigation();
@@ -64,7 +65,7 @@ export function LoginScreen() {
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>Log In</Text>
+            <LineIcon name="check" style={styles.buttonText} />
           )}
         </TouchableOpacity>
 
@@ -72,9 +73,7 @@ export function LoginScreen() {
           onPress={() => navigation.navigate('Register' as never)}
           style={styles.linkButton}
         >
-          <Text style={styles.linkText}>
-            Don't have an account? Sign up
-          </Text>
+          <LineIcon name="plus" style={styles.linkText} />
         </TouchableOpacity>
       </View>
     </View>

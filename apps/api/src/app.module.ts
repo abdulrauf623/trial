@@ -12,6 +12,14 @@ import { SearchModule } from './search/search.module';
 import { AiModule } from './ai/ai.module';
 import { QueueModule } from './queue/queue.module';
 import { LoggerModule } from './logger/logger.module';
+import { StorageModule } from './storage/storage.module';
+import { ProcessingModule } from './processing/processing.module';
+import { UploadsModule } from './uploads/uploads.module';
+import { UserGarmentsModule } from './user-garments/user-garments.module';
+import { UserPostsModule } from './user-posts/user-posts.module';
+import { StyleProfileModule } from './style-profile/style-profile.module';
+import { OutfitsModule } from './outfits/outfits.module';
+import { ExploreModule } from './explore/explore.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { PerformanceInterceptor } from './common/performance.interceptor';
@@ -37,6 +45,14 @@ import { PerformanceInterceptor } from './common/performance.interceptor';
     AiModule,
     QueueModule,
     LoggerModule,
+    StorageModule,
+    ProcessingModule,
+    UploadsModule,
+    UserGarmentsModule,
+    UserPostsModule,
+    StyleProfileModule,
+    OutfitsModule,
+    ExploreModule,
   ],
   controllers: [],
   providers: [

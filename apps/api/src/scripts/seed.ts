@@ -8,8 +8,18 @@ async function main() {
 
   // Clear existing data
   await prisma.like.deleteMany();
+  await prisma.savedPost.deleteMany();
   await prisma.wardrobeItem.deleteMany();
   await prisma.wardrobeCollection.deleteMany();
+  await prisma.createdOutfitItem.deleteMany();
+  await prisma.createdOutfit.deleteMany();
+  await prisma.userPostTag.deleteMany();
+  await prisma.userPost.deleteMany();
+  await prisma.userGarment.deleteMany();
+  await prisma.mediaUpload.deleteMany();
+  await prisma.outfit.deleteMany();
+  await prisma.styleProfile.deleteMany();
+  await prisma.explorePost.deleteMany();
   await prisma.clothingItem.deleteMany();
   await prisma.post.deleteMany();
   await prisma.follow.deleteMany();
@@ -55,6 +65,63 @@ async function main() {
     },
   });
 
+  const creator3 = await prisma.user.upsert({
+    where: { email: 'creator3@example.com' },
+    update: {
+      passwordHash: password,
+      displayName: 'Maya Rodriguez',
+      accountType: 'creator',
+      avatarUrl: 'https://i.pravatar.cc/300?img=44',
+      stylePreferences: ['bohemian', 'vintage'],
+    },
+    create: {
+      email: 'creator3@example.com',
+      passwordHash: password,
+      displayName: 'Maya Rodriguez',
+      accountType: 'creator',
+      avatarUrl: 'https://i.pravatar.cc/300?img=44',
+      stylePreferences: ['bohemian', 'vintage'],
+    },
+  });
+
+  const creator4 = await prisma.user.upsert({
+    where: { email: 'creator4@example.com' },
+    update: {
+      passwordHash: password,
+      displayName: 'David Kim',
+      accountType: 'creator',
+      avatarUrl: 'https://i.pravatar.cc/300?img=52',
+      stylePreferences: ['formal', 'business'],
+    },
+    create: {
+      email: 'creator4@example.com',
+      passwordHash: password,
+      displayName: 'David Kim',
+      accountType: 'creator',
+      avatarUrl: 'https://i.pravatar.cc/300?img=52',
+      stylePreferences: ['formal', 'business'],
+    },
+  });
+
+  const creator5 = await prisma.user.upsert({
+    where: { email: 'creator5@example.com' },
+    update: {
+      passwordHash: password,
+      displayName: 'Emma Wilson',
+      accountType: 'creator',
+      avatarUrl: 'https://i.pravatar.cc/300?img=20',
+      stylePreferences: ['minimalist', 'modern'],
+    },
+    create: {
+      email: 'creator5@example.com',
+      passwordHash: password,
+      displayName: 'Emma Wilson',
+      accountType: 'creator',
+      avatarUrl: 'https://i.pravatar.cc/300?img=20',
+      stylePreferences: ['minimalist', 'modern'],
+    },
+  });
+
   const user1 = await prisma.user.upsert({
     where: { email: 'user@example.com' },
     update: {
@@ -74,7 +141,220 @@ async function main() {
     },
   });
 
-  console.log('✅ Created 3 users');
+  await prisma.user.upsert({
+    where: { email: 'user2@example.com' },
+    update: {
+      passwordHash: password,
+      displayName: 'Jamie Park',
+      accountType: 'user',
+      stylePreferences: ['casual', 'minimalist'],
+    },
+    create: {
+      email: 'user2@example.com',
+      passwordHash: password,
+      displayName: 'Jamie Park',
+      accountType: 'user',
+      stylePreferences: ['casual', 'minimalist'],
+    },
+  });
+
+  await prisma.user.upsert({
+    where: { email: 'user3@example.com' },
+    update: {
+      passwordHash: password,
+      displayName: 'Riley Johnson',
+      accountType: 'user',
+      stylePreferences: ['vintage', 'bohemian'],
+    },
+    create: {
+      email: 'user3@example.com',
+      passwordHash: password,
+      displayName: 'Riley Johnson',
+      accountType: 'user',
+      stylePreferences: ['vintage', 'bohemian'],
+    },
+  });
+
+  console.log('✅ Created 8 users (5 creators, 3 regular users)');
+
+  await prisma.styleProfile.upsert({
+    where: { userId: user1.id },
+    update: {
+      contexts: ['Weekend casual', 'Travel'],
+      dressCodes: ['Casual', 'Smart casual'],
+      climate: 'Mixed',
+      rainy: false,
+      fitPreference: 'Regular',
+      archetypes: ['Minimal', 'Streetwear'],
+      riskLevel: 'Balanced',
+      preferredNeutrals: ['Black', 'White', 'Grey', 'Navy'],
+      likedColors: ['blue', 'olive'],
+      avoidedColors: ['neon'],
+      patternComfort: 'Some patterns',
+      shoesPreference: ['Sneakers', 'Boots'],
+      accessoriesLevel: 'Minimal',
+      comfortConstraints: ['no heels'],
+      shoppingInterest: 'Balanced',
+      budgetBand: 'Mid',
+    },
+    create: {
+      userId: user1.id,
+      contexts: ['Weekend casual', 'Travel'],
+      dressCodes: ['Casual', 'Smart casual'],
+      climate: 'Mixed',
+      rainy: false,
+      fitPreference: 'Regular',
+      archetypes: ['Minimal', 'Streetwear'],
+      riskLevel: 'Balanced',
+      preferredNeutrals: ['Black', 'White', 'Grey', 'Navy'],
+      likedColors: ['blue', 'olive'],
+      avoidedColors: ['neon'],
+      patternComfort: 'Some patterns',
+      shoesPreference: ['Sneakers', 'Boots'],
+      accessoriesLevel: 'Minimal',
+      comfortConstraints: ['no heels'],
+      shoppingInterest: 'Balanced',
+      budgetBand: 'Mid',
+    },
+  });
+  console.log('✅ Seeded style profile for user@example.com');
+
+  const starterGarmentSeeds = [
+    {
+      imageUrl: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=900',
+      category: 'tshirt',
+      subcategory: 'crew-neck',
+      colors: ['white'],
+      dominantHex: '#f5f5f5',
+      pattern: 'solid',
+      patternType: 'solid',
+      textureTags: ['cotton'],
+      formalityScore: 2,
+      seasonTags: ['spring', 'summer', 'fall'],
+      silhouetteTag: 'regular',
+      material: 'cotton',
+      brand: 'Everlane',
+      tags: ['casual', 'weekend'],
+    },
+    {
+      imageUrl: 'https://images.unsplash.com/photo-1542272604-787c3835535d?w=900',
+      category: 'pants',
+      subcategory: 'straight',
+      colors: ['black'],
+      dominantHex: '#1f2937',
+      pattern: 'solid',
+      patternType: 'solid',
+      textureTags: ['denim'],
+      formalityScore: 3,
+      seasonTags: ['spring', 'fall', 'winter'],
+      silhouetteTag: 'straight',
+      material: 'denim',
+      brand: "Levi's",
+      tags: ['casual', 'streetwear'],
+    },
+    {
+      imageUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=900',
+      category: 'sneakers',
+      subcategory: 'low-top',
+      colors: ['white'],
+      dominantHex: '#f3f4f6',
+      pattern: 'solid',
+      patternType: 'solid',
+      textureTags: ['leather'],
+      formalityScore: 2,
+      seasonTags: ['spring', 'summer', 'fall'],
+      silhouetteTag: 'regular',
+      material: 'leather',
+      brand: 'Nike',
+      tags: ['casual', 'sporty'],
+    },
+    {
+      imageUrl: 'https://images.unsplash.com/photo-1611312449412-6cefac5dc3e4?w=900',
+      category: 'jacket',
+      subcategory: 'bomber',
+      colors: ['olive'],
+      dominantHex: '#556b2f',
+      pattern: 'solid',
+      patternType: 'solid',
+      textureTags: ['nylon'],
+      formalityScore: 3,
+      seasonTags: ['fall', 'winter'],
+      silhouetteTag: 'regular',
+      material: 'nylon',
+      brand: 'Alpha Industries',
+      tags: ['streetwear', 'layering'],
+    },
+  ];
+
+  const seededUploadedGarments: Array<{ garmentId: string; seed: (typeof starterGarmentSeeds)[number] }> = [];
+
+  for (const seed of starterGarmentSeeds) {
+    const upload = await prisma.mediaUpload.create({
+      data: {
+        userId: user1.id,
+        status: 'ready',
+        originalUrl: seed.imageUrl,
+        processedUrl: seed.imageUrl,
+        thumbnailUrl: seed.imageUrl,
+        metadata: { seeded: true },
+      },
+    });
+
+    const garment = await prisma.userGarment.create({
+      data: {
+        userId: user1.id,
+        mediaUploadId: upload.id,
+        category: seed.category,
+        subcategory: seed.subcategory,
+        colors: seed.colors,
+        dominantHex: seed.dominantHex,
+        pattern: seed.pattern,
+        patternType: seed.patternType,
+        textureTags: seed.textureTags,
+        formalityScore: seed.formalityScore,
+        seasonTags: seed.seasonTags,
+        silhouetteTag: seed.silhouetteTag,
+        material: seed.material,
+        brand: seed.brand,
+        tags: seed.tags,
+        notes: 'Starter capsule garment seeded for outfit testing',
+      },
+    });
+
+    seededUploadedGarments.push({
+      garmentId: garment.id,
+      seed,
+    });
+  }
+  console.log('✅ Added starter uploaded garments (top, bottom, shoes, jacket) for user@example.com');
+
+  const sampleOutfit = await prisma.createdOutfit.create({
+    data: {
+      ownerUserId: user1.id,
+      name: 'Starter Capsule',
+      backgroundStyle: 'paper',
+      items: {
+        create: seededUploadedGarments.slice(0, 4).map((entry, index) => ({
+          wardrobeItemId: `upload:${entry.garmentId}`,
+          sourceType: 'upload',
+          sourceRefId: entry.garmentId,
+          imageOriginalUrl: entry.seed.imageUrl,
+          imageCutoutUrl: entry.seed.imageUrl,
+          category: entry.seed.category,
+          colors: entry.seed.colors,
+          x: [0.36, 0.64, 0.58, 0.46][index] || 0.5,
+          y: [0.34, 0.52, 0.78, 0.58][index] || 0.5,
+          scale: [1.06, 0.94, 0.82, 0.9][index] || 1,
+          rotation: [-4, 3, 0, 6][index] || 0,
+          zIndex: index,
+          mirror: false,
+          labelText: entry.seed.brand || entry.seed.category,
+          labelVisible: false,
+        })),
+      },
+    },
+  });
+  console.log(`✅ Created sample collage outfit (${sampleOutfit.id}) for user@example.com`);
 
   // Create posts with clothing items
   const post1 = await prisma.post.create({
@@ -108,6 +388,115 @@ async function main() {
             name: 'Slim Fit Black Trousers',
             price: 49.99,
             color: 'black',
+            source: 'creator',
+          },
+        ],
+      },
+    },
+  });
+
+  const starterPostCapsule = await prisma.post.create({
+    data: {
+      creatorId: creator5.id,
+      caption: '[STARTER] Core capsule look: tee + trousers + sneakers',
+      imageUrls: [
+        'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=900',
+      ],
+      tags: ['#starter', '#outfitbuilder', '#capsule'],
+      engagementScore: 99.9,
+      clothingItems: {
+        create: [
+          {
+            imageIndex: 0,
+            bbox: { x: 0.24, y: 0.12, width: 0.5, height: 0.3 },
+            category: 'tshirt',
+            brand: 'Everlane',
+            name: 'Starter White Tee',
+            price: 28.0,
+            color: 'white',
+            pattern: 'solid',
+            source: 'creator',
+          },
+          {
+            imageIndex: 0,
+            bbox: { x: 0.24, y: 0.44, width: 0.5, height: 0.36 },
+            category: 'pants',
+            brand: "Levi's",
+            name: 'Starter Black Trousers',
+            price: 92.0,
+            color: 'black',
+            pattern: 'solid',
+            source: 'creator',
+          },
+          {
+            imageIndex: 0,
+            bbox: { x: 0.28, y: 0.81, width: 0.45, height: 0.16 },
+            category: 'sneakers',
+            brand: 'Nike',
+            name: 'Starter White Sneakers',
+            price: 110.0,
+            color: 'white',
+            pattern: 'solid',
+            source: 'creator',
+          },
+        ],
+      },
+    },
+  });
+
+  const starterPostLayered = await prisma.post.create({
+    data: {
+      creatorId: creator1.id,
+      caption: '[STARTER] Layered street look: hoodie + cargo + boots',
+      imageUrls: [
+        'https://images.unsplash.com/photo-1523398002811-999ca8dec234?w=900',
+      ],
+      tags: ['#starter', '#outfitbuilder', '#layered'],
+      engagementScore: 97.5,
+      clothingItems: {
+        create: [
+          {
+            imageIndex: 0,
+            bbox: { x: 0.24, y: 0.16, width: 0.5, height: 0.32 },
+            category: 'hoodie',
+            brand: 'Aritzia',
+            name: 'Starter Grey Hoodie',
+            price: 74.0,
+            color: 'grey',
+            pattern: 'solid',
+            source: 'creator',
+          },
+          {
+            imageIndex: 0,
+            bbox: { x: 0.25, y: 0.5, width: 0.5, height: 0.33 },
+            category: 'pants',
+            brand: 'Carhartt',
+            name: 'Starter Olive Cargo',
+            price: 98.0,
+            color: 'olive',
+            pattern: 'solid',
+            source: 'creator',
+          },
+          {
+            imageIndex: 0,
+            bbox: { x: 0.28, y: 0.83, width: 0.44, height: 0.15 },
+            category: 'boots',
+            brand: 'Dr. Martens',
+            name: 'Starter Black Boots',
+            price: 160.0,
+            color: 'black',
+            pattern: 'solid',
+            source: 'creator',
+          },
+          {
+            imageIndex: 0,
+            bbox: { x: 0.2, y: 0.06, width: 0.58, height: 0.25 },
+            category: 'jacket',
+            brand: 'Alpha Industries',
+            name: 'Starter Olive Bomber',
+            price: 149.0,
+            color: 'olive',
+            pattern: 'solid',
             source: 'creator',
           },
         ],
@@ -325,6 +714,97 @@ async function main() {
         { imageIndex: 0, category: 'set', brand: 'Skims', name: 'Soft Lounge Set', price: 96.0, color: 'gray', pattern: 'solid' },
       ],
     },
+    {
+      creatorId: creator3.id,
+      caption: 'Flowy bohemian maxi dress for summer festivals.',
+      imageUrls: ['https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=800'],
+      tags: ['#bohemian', '#festival', '#summerstyle'],
+      engagementScore: 25.3,
+      clothingItems: [
+        { imageIndex: 0, category: 'dress', brand: 'Free People', name: 'Floral Maxi Dress', price: 168.0, color: 'multicolor', pattern: 'floral' },
+      ],
+    },
+    {
+      creatorId: creator3.id,
+      caption: 'Vintage leather jacket paired with mom jeans.',
+      imageUrls: ['https://images.unsplash.com/photo-1551028719-00167b16eac5?w=800'],
+      tags: ['#vintage', '#leather', '#momjeans'],
+      engagementScore: 28.9,
+      clothingItems: [
+        { imageIndex: 0, category: 'jacket', brand: 'Vintage', name: 'Brown Leather Jacket', price: 145.0, color: 'brown', pattern: 'solid' },
+        { imageIndex: 0, category: 'pants', brand: "Levi's", name: 'Mom Jeans', price: 98.0, color: 'blue', pattern: 'solid' },
+      ],
+    },
+    {
+      creatorId: creator4.id,
+      caption: 'Sharp navy suit for the boardroom.',
+      imageUrls: ['https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=800'],
+      tags: ['#business', '#suit', '#professional'],
+      engagementScore: 32.1,
+      clothingItems: [
+        { imageIndex: 0, category: 'suit', brand: 'Hugo Boss', name: 'Slim Fit Suit', price: 795.0, color: 'navy', pattern: 'solid' },
+      ],
+    },
+    {
+      creatorId: creator4.id,
+      caption: 'Business casual Friday with a crisp oxford shirt.',
+      imageUrls: ['https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=800'],
+      tags: ['#businesscasual', '#oxford', '#friday'],
+      engagementScore: 24.7,
+      clothingItems: [
+        { imageIndex: 0, category: 'shirt', brand: 'Brooks Brothers', name: 'Oxford Button Down', price: 79.5, color: 'white', pattern: 'solid' },
+      ],
+    },
+    {
+      creatorId: creator5.id,
+      caption: 'Minimalist modern look with clean lines.',
+      imageUrls: ['https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=800'],
+      tags: ['#minimalist', '#modern', '#cleanlines'],
+      engagementScore: 27.8,
+      clothingItems: [
+        { imageIndex: 0, category: 'coat', brand: 'COS', name: 'Structured Wool Coat', price: 350.0, color: 'camel', pattern: 'solid' },
+      ],
+    },
+    {
+      creatorId: creator5.id,
+      caption: 'Monochrome perfection in shades of grey.',
+      imageUrls: ['https://images.unsplash.com/photo-1529139574466-a303027c1d8b?w=800'],
+      tags: ['#monochrome', '#grey', '#minimal'],
+      engagementScore: 26.4,
+      clothingItems: [
+        { imageIndex: 0, category: 'top', brand: 'Everlane', name: 'Cashmere Sweater', price: 135.0, color: 'grey', pattern: 'solid' },
+      ],
+    },
+    {
+      creatorId: creator3.id,
+      caption: 'Crochet top and high-waisted shorts for beach vibes.',
+      imageUrls: ['https://images.unsplash.com/photo-1560243563-062bfc001d68?w=800'],
+      tags: ['#beach', '#crochet', '#summer'],
+      engagementScore: 21.5,
+      clothingItems: [
+        { imageIndex: 0, category: 'top', brand: 'Urban Outfitters', name: 'Crochet Halter Top', price: 48.0, color: 'white', pattern: 'crochet' },
+      ],
+    },
+    {
+      creatorId: creator4.id,
+      caption: 'Elegant evening wear with a modern twist.',
+      imageUrls: ['https://images.unsplash.com/photo-1617922001439-4a2e6562f328?w=800'],
+      tags: ['#evening', '#elegant', '#formal'],
+      engagementScore: 33.2,
+      clothingItems: [
+        { imageIndex: 0, category: 'dress', brand: 'Armani', name: 'Silk Evening Gown', price: 1250.0, color: 'black', pattern: 'solid' },
+      ],
+    },
+    {
+      creatorId: creator5.id,
+      caption: 'Sleek turtleneck and tailored pants combo.',
+      imageUrls: ['https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800'],
+      tags: ['#turtleneck', '#tailored', '#sleek'],
+      engagementScore: 23.9,
+      clothingItems: [
+        { imageIndex: 0, category: 'top', brand: 'Uniqlo', name: 'Merino Turtleneck', price: 49.9, color: 'black', pattern: 'solid' },
+      ],
+    },
   ];
 
   for (const seed of additionalPostSeeds) {
@@ -345,33 +825,61 @@ async function main() {
     });
   }
 
-  console.log(`✅ Created ${3 + additionalPostSeeds.length} posts with clothing items`);
+  console.log(`✅ Created ${5 + additionalPostSeeds.length} posts with clothing items`);
 
   // Create wardrobe collection for user1
   const collection = await prisma.wardrobeCollection.create({
     data: {
       userId: user1.id,
       name: 'Winter Essentials',
-      icon: '🧥',
+      icon: 'coat',
       sortOrder: 0,
     },
   });
 
-  // Add item to wardrobe
-  const item1 = await prisma.clothingItem.findFirst({ where: { postId: post1.id } });
-  if (item1) {
+  const starterWardrobeItems = await prisma.clothingItem.findMany({
+    where: {
+      postId: { in: [starterPostCapsule.id, starterPostLayered.id, post1.id] },
+    },
+    include: {
+      post: {
+        select: {
+          imageUrls: true,
+        },
+      },
+    },
+  });
+
+  let starterAdded = 0;
+  for (const clothingItem of starterWardrobeItems) {
     await prisma.wardrobeItem.create({
       data: {
         userId: user1.id,
         collectionId: collection.id,
-        clothingItemId: item1.id,
-        snapshot: { name: item1.name, brand: item1.brand, price: item1.price },
-        notes: 'Love this bomber jacket!',
+        clothingItemId: clothingItem.id,
+        snapshot: {
+          id: clothingItem.id,
+          postId: clothingItem.postId,
+          imageIndex: clothingItem.imageIndex,
+          category: clothingItem.category,
+          brand: clothingItem.brand,
+          name: clothingItem.name,
+          price: clothingItem.price ? parseFloat(clothingItem.price.toString()) : null,
+          color: clothingItem.color,
+          pattern: clothingItem.pattern,
+          imageUrls: clothingItem.post.imageUrls,
+        },
+        notes: 'Starter seeded wardrobe item',
       },
     });
+    starterAdded += 1;
   }
 
-  console.log('✅ Created wardrobe collection with 1 item');
+  console.log(`✅ Created wardrobe collection with ${starterAdded} starter items`);
+  console.log('✅ Starter posts to save manually in-app for testing:');
+  console.log('   1) [STARTER] Core capsule look: tee + trousers + sneakers');
+  console.log('   2) [STARTER] Layered street look: hoodie + cargo + boots');
+  console.log('   Save either one to get top + bottom + shoes required for outfit generation.');
   console.log('🎉 Seed complete!');
 }
 

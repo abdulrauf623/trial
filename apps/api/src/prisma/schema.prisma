@@ -27,6 +27,7 @@ model User {
   displayName       String    @map("display_name")
   avatarUrl         String?   @map("avatar_url")
   stylePreferences  String[]  @default([]) @map("style_preferences")
+  wardrobePublic    Boolean   @default(true) @map("wardrobe_public")
   isPremium         Boolean   @default(false) @map("is_premium")
   premiumExpiresAt  DateTime? @map("premium_expires_at")
   createdAt         DateTime  @default(now()) @map("created_at")
@@ -40,6 +41,13 @@ model User {
   following         Follow[] @relation("UserFollows")
   followers         Follow[] @relation("UserFollowers")
   reports           Report[] @relation("UserReports")
+  mediaUploads      MediaUpload[] @relation("UserMediaUploads")
+  userGarments      UserGarment[] @relation("UserGarments")
+  userPosts         UserPost[] @relation("UserPosts")
+  styleProfile      StyleProfile?
+  outfits           Outfit[]
+  createdOutfits    CreatedOutfit[]
+  explorePosts      ExplorePost[] @relation("ExplorePostAuthor")
 
   @@index([email])
   @@index([accountType])
@@ -199,4 +207,208 @@ model Report {
   @@index([targetType, targetId])
   @@index([status])
   @@map("reports")
+}
+
+enum MediaStatus {
+  pending       // Presigned URL created, waiting for upload
+  uploaded      // File uploaded, waiting for processing
+  processing    // Worker is processing the image
+  ready         // Processing complete, ready to use
+  failed        // Processing failed
+}
+
+model MediaUpload {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  status            MediaStatus  @default(pending)
+  originalUrl       String?      @map("original_url")
+  processedUrl      String?      @map("processed_url")
+  thumbnailUrl      String?      @map("thumbnail_url")
+  metadata          Json?        // Processing metadata, errors, etc.
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  user              User         @relation("UserMediaUploads", fields: [userId], references: [id], onDelete: Cascade)
+  userGarments      UserGarment[]
+  userPosts         UserPost[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("media_uploads")
+}
+
+model UserGarment {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  mediaUploadId     String       @map("media_upload_id") @db.Uuid
+  category          String?
+  subcategory       String?
+  colors            String[]     @default([])
+  dominantHex       String?      @map("dominant_hex")
+  confidence        Float?       // Category detection confidence
+  pattern           String?      // e.g., "solid", "striped", "floral", "plaid"
+  patternType       String?      @map("pattern_type")
+  textureTags       String[]     @default([]) @map("texture_tags")
+  formalityScore    Int          @default(3) @map("formality_score")
+  seasonTags        String[]     @default([]) @map("season_tags")
+  removedBgUrl      String?      @map("removed_bg_url")
+  silhouetteTag     String?      @map("silhouette_tag")
+  material          String?      // e.g., "cotton", "denim", "wool", "leather"
+  brand             String?      // Optional brand name
+  size              String?      // e.g., "S", "M", "L", "32x34"
+  tags              String[]     @default([]) // Occasion tags: e.g., ["casual", "formal", "summer"]
+  notes             String?
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  user              User         @relation("UserGarments", fields: [userId], references: [id], onDelete: Cascade)
+  mediaUpload       MediaUpload  @relation(fields: [mediaUploadId], references: [id], onDelete: Cascade)
+  taggedInPosts     UserPostTag[]
+
+  @@index([userId])
+  @@index([category])
+  @@map("user_garments")
+}
+
+model StyleProfile {
+  userId               String    @id @map("user_id") @db.Uuid
+  contexts             String[]  @default([])
+  dressCodes           String[]  @default([]) @map("dress_codes")
+  climate              String
+  rainy                Boolean   @default(false)
+  fitPreference        String    @map("fit_preference")
+  archetypes           String[]  @default([])
+  riskLevel            String    @map("risk_level")
+  preferredNeutrals    String[]  @default([]) @map("preferred_neutrals")
+  likedColors          String[]  @default([]) @map("liked_colors")
+  avoidedColors        String[]  @default([]) @map("avoided_colors")
+  patternComfort       String    @map("pattern_comfort")
+  shoesPreference      String[]  @default([]) @map("shoes_preference")
+  accessoriesLevel     String    @map("accessories_level")
+  comfortConstraints   String[]  @default([]) @map("comfort_constraints")
+  shoppingInterest     String    @map("shopping_interest")
+  budgetBand           String    @map("budget_band")
+  heightRange          String?   @map("height_range")
+  proportions          String?
+  shoulderWidth        String?   @map("shoulder_width")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("style_profiles")
+}
+
+model Outfit {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  garmentIds      String[]  @default([]) @map("garment_ids")
+  occasionTag     String    @map("occasion_tag")
+  seasonTag       String    @map("season_tag")
+  formalityScore  Int       @map("formality_score")
+  colorPalette    String[]  @default([]) @map("color_palette")
+  silhouetteTag   String    @map("silhouette_tag")
+  explanations    String[]  @default([])
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("outfits")
+}
+
+model CreatedOutfit {
+  id               String              @id @default(uuid()) @db.Uuid
+  ownerUserId      String              @map("owner_user_id") @db.Uuid
+  name             String?
+  coverImageUrl    String?             @map("cover_image_url")
+  backgroundStyle  String              @default("solid") @map("background_style")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  owner            User                @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  items            CreatedOutfitItem[]
+
+  @@index([ownerUserId, createdAt(sort: Desc)])
+  @@map("created_outfits")
+}
+
+model CreatedOutfitItem {
+  id                String        @id @default(uuid()) @db.Uuid
+  outfitId          String        @map("outfit_id") @db.Uuid
+  wardrobeItemId    String        @map("wardrobe_item_id")
+  sourceType        String        @map("source_type")
+  sourceRefId       String?       @map("source_ref_id")
+  imageOriginalUrl  String        @map("image_original_url")
+  imageCutoutUrl    String        @map("image_cutout_url")
+  category          String?
+  colors            String[]      @default([])
+  x                 Float
+  y                 Float
+  scale             Float
+  rotation          Float
+  zIndex            Int           @default(0) @map("z_index")
+  mirror            Boolean       @default(false)
+  labelText         String?       @map("label_text")
+  labelVisible      Boolean       @default(false) @map("label_visible")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  outfit            CreatedOutfit @relation(fields: [outfitId], references: [id], onDelete: Cascade)
+
+  @@index([outfitId, zIndex])
+  @@index([wardrobeItemId])
+  @@map("created_outfit_items")
+}
+
+model ExplorePost {
+  id              String    @id @default(uuid()) @db.Uuid
+  authorId        String    @map("author_id") @db.Uuid
+  imageUrl        String    @map("image_url")
+  taggedGarments  String[]  @default([]) @map("tagged_garments")
+  archetypes      String[]  @default([])
+  colors          String[]  @default([])
+  patternLevel    String    @map("pattern_level")
+  dressCode       String    @map("dress_code")
+  season          String
+  vibeKeywords    String[]  @default([]) @map("vibe_keywords")
+  contextTags     String[]  @default([]) @map("context_tags")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  author          User      @relation("ExplorePostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([authorId])
+  @@index([createdAt(sort: Desc)])
+  @@map("explore_posts")
+}
+
+model UserPost {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  mediaUploadId     String?      @map("media_upload_id") @db.Uuid
+  imageUrl          String       @map("image_url")
+  processedUrl      String?      @map("processed_url")
+  caption           String?
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  user              User         @relation("UserPosts", fields: [userId], references: [id], onDelete: Cascade)
+  mediaUpload       MediaUpload? @relation(fields: [mediaUploadId], references: [id], onDelete: SetNull)
+  taggedGarments    UserPostTag[]
+
+  @@index([userId])
+  @@index([createdAt(sort: Desc)])
+  @@map("user_posts")
+}
+
+model UserPostTag {
+  postId            String       @map("post_id") @db.Uuid
+  garmentId         String       @map("garment_id") @db.Uuid
+
+  post              UserPost     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  garment           UserGarment  @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+
+  @@id([postId, garmentId])
+  @@index([garmentId])
+  @@map("user_post_tags")
 }

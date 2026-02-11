@@ -15,6 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { api } from '../services/api';
 import { Post } from '@fashion/shared';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { LineIcon } from '../components/LineIcon';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_SIZE = SCREEN_WIDTH / 3 - 1;
@@ -111,7 +112,7 @@ export function SearchScreen() {
           returnKeyType="search"
         />
         <Pressable onPress={() => handleSearch()} style={styles.searchButton}>
-          <Text style={styles.searchButtonText}>Search</Text>
+          <LineIcon name="search" style={styles.searchButtonText} />
         </Pressable>
       </View>
 
@@ -134,17 +135,13 @@ export function SearchScreen() {
           style={[styles.tab, searchType === 'posts' && styles.tabActive]}
           onPress={() => setSearchType('posts')}
         >
-          <Text style={[styles.tabText, searchType === 'posts' && styles.tabTextActive]}>
-            Posts
-          </Text>
+          <LineIcon name="grid" color={searchType === 'posts' ? '#fff' : '#666'} size={15} />
         </Pressable>
         <Pressable
           style={[styles.tab, searchType === 'items' && styles.tabActive]}
           onPress={() => setSearchType('items')}
         >
-          <Text style={[styles.tabText, searchType === 'items' && styles.tabTextActive]}>
-            Items
-          </Text>
+          <LineIcon name="wardrobe" color={searchType === 'items' ? '#fff' : '#666'} size={15} />
         </Pressable>
       </View>
 
@@ -152,13 +149,13 @@ export function SearchScreen() {
         <Text style={styles.filtersLabel}>Filters</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <Pressable style={styles.filterChip}>
-            <Text style={styles.filterChipText}>Category</Text>
+            <LineIcon name="grid" size={14} color="#666" />
           </Pressable>
           <Pressable style={styles.filterChip}>
-            <Text style={styles.filterChipText}>Color</Text>
+            <LineIcon name="sun" size={14} color="#666" />
           </Pressable>
           <Pressable style={styles.filterChip}>
-            <Text style={styles.filterChipText}>Price Range</Text>
+            <LineIcon name="link" size={14} color="#666" />
           </Pressable>
         </ScrollView>
       </View>
@@ -175,7 +172,7 @@ export function SearchScreen() {
         <View style={styles.emptyContainer}>
           {renderHeader()}
           <View style={styles.emptyContent}>
-            <Text style={styles.emptyIcon}>🔍</Text>
+            <LineIcon name="search" style={styles.emptyIcon} />
             <Text style={styles.emptyText}>
               {query ? 'No results found' : 'Search for posts, items, or tags'}
             </Text>

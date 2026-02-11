@@ -94,16 +94,51 @@ export class UsersService {
     const items = posts.slice(0, limit);
 
     return {
-      posts: items.map((post: any) => ({
-        id: post.id,
-        creator: post.creator,
-        caption: post.caption,
-        imageUrls: post.imageUrls,
-        tags: post.tags,
-        likeCount: post._count.likes,
-        isLikedByMe: post.likes.length > 0,
-        createdAt: post.createdAt.toISOString(),
-      })),
+      posts: items.map((post: any) => this.formatPost(post)),
+      nextCursor: hasMore && items.length > 0 ? items[items.length - 1].id : null,
+      hasMore,
+    };
+  }
+
+  async getLikedPosts(userId: string, viewerId: string, limit = 20, cursor?: string) {
+    const posts = await this.prisma.post.findMany({
+      where: {
+        likes: {
+          some: {
+            userId,
+          },
+        },
+      },
+      take: limit + 1,
+      ...(cursor && {
+        skip: 1,
+        cursor: { id: cursor },
+      }),
+      orderBy: { createdAt: 'desc' },
+      include: {
+        creator: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true,
+            accountType: true,
+          },
+        },
+        _count: {
+          select: { likes: true },
+        },
+        likes: {
+          where: { userId: viewerId },
+          select: { userId: true },
+        },
+      },
+    });
+
+    const hasMore = posts.length > limit;
+    const items = posts.slice(0, limit);
+
+    return {
+      posts: items.map((post: any) => this.formatPost(post)),
       nextCursor: hasMore && items.length > 0 ? items[items.length - 1].id : null,
       hasMore,
     };
@@ -206,6 +241,19 @@ export class UsersService {
         ? `${items[items.length - 1].followerId}_${items[items.length - 1].followingId}`
         : null,
       hasMore,
+    };
+  }
+
+  private formatPost(post: any) {
+    return {
+      id: post.id,
+      creator: post.creator,
+      caption: post.caption,
+      imageUrls: post.imageUrls,
+      tags: post.tags,
+      likeCount: post._count.likes,
+      isLikedByMe: post.likes.length > 0,
+      createdAt: post.createdAt.toISOString(),
     };
   }
 }

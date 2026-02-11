@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,43 +9,66 @@ import {
   Pressable,
   Dimensions,
   Alert,
+  PanResponder,
 } from 'react-native';
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { api } from '../services/api';
 import { UserProfile, Post } from '@fashion/shared';
 import { ReportModal } from '../components/ReportModal';
+import { LineIcon } from '../components/LineIcon';
 
 type UserProfileRouteProp = RouteProp<RootStackParamList, 'UserProfile'>;
+type UserProfileNavigation = NativeStackNavigationProp<RootStackParamList>;
+type ProfileTab = 'posted' | 'liked';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const IMAGE_SIZE = SCREEN_WIDTH / 3 - 1;
 
 export function UserProfileScreen() {
   const route = useRoute<UserProfileRouteProp>();
-  const navigation = useNavigation();
+  const navigation = useNavigation<UserProfileNavigation>();
   const { userId } = route.params;
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<ProfileTab>('posted');
+
+  const [postedPosts, setPostedPosts] = useState<Post[]>([]);
+  const [postedNextCursor, setPostedNextCursor] = useState<string | null>(null);
+  const [postedHasMore, setPostedHasMore] = useState(false);
+  const [loadingPostedMore, setLoadingPostedMore] = useState(false);
+
+  const [likedPosts, setLikedPosts] = useState<Post[]>([]);
+  const [likedNextCursor, setLikedNextCursor] = useState<string | null>(null);
+  const [likedHasMore, setLikedHasMore] = useState(false);
+  const [loadingLiked, setLoadingLiked] = useState(false);
+  const [loadingLikedMore, setLoadingLikedMore] = useState(false);
+  const [likedInitialized, setLikedInitialized] = useState(false);
+
   const [isFollowing, setIsFollowing] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
 
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
+
       const profileData = await api.getUserProfile(userId);
       setProfile(profileData);
       setIsFollowing(profileData.isFollowedByMe);
 
       const postsData = await api.getUserPosts(userId, 20);
-      setPosts(postsData.posts);
-      setNextCursor(postsData.nextCursor);
-      setHasMore(postsData.hasMore);
+      setPostedPosts(postsData.posts);
+      setPostedNextCursor(postsData.nextCursor);
+      setPostedHasMore(postsData.hasMore);
+
+      setActiveTab('posted');
+      setLikedPosts([]);
+      setLikedNextCursor(null);
+      setLikedHasMore(false);
+      setLikedInitialized(false);
     } catch (error) {
       console.error('Failed to load profile:', error);
       Alert.alert('Error', 'Failed to load user profile');
@@ -54,25 +77,64 @@ export function UserProfileScreen() {
     }
   }, [userId]);
 
-  const loadMorePosts = useCallback(async () => {
-    if (loadingMore || !hasMore || !nextCursor) return;
+  const loadMorePosted = useCallback(async () => {
+    if (loadingPostedMore || !postedHasMore || !postedNextCursor) return;
 
     try {
-      setLoadingMore(true);
-      const postsData = await api.getUserPosts(userId, 20, nextCursor);
-      setPosts((prev) => [...prev, ...postsData.posts]);
-      setNextCursor(postsData.nextCursor);
-      setHasMore(postsData.hasMore);
+      setLoadingPostedMore(true);
+      const postsData = await api.getUserPosts(userId, 20, postedNextCursor);
+      setPostedPosts((prev) => [...prev, ...postsData.posts]);
+      setPostedNextCursor(postsData.nextCursor);
+      setPostedHasMore(postsData.hasMore);
     } catch (error) {
-      console.error('Failed to load more posts:', error);
+      console.error('Failed to load more posted items:', error);
     } finally {
-      setLoadingMore(false);
+      setLoadingPostedMore(false);
     }
-  }, [userId, loadingMore, hasMore, nextCursor]);
+  }, [userId, loadingPostedMore, postedHasMore, postedNextCursor]);
+
+  const loadLikedInitial = useCallback(async () => {
+    if (loadingLiked || likedInitialized) return;
+
+    try {
+      setLoadingLiked(true);
+      const postsData = await api.getUserLikedPosts(userId, 20);
+      setLikedPosts(postsData.posts);
+      setLikedNextCursor(postsData.nextCursor);
+      setLikedHasMore(postsData.hasMore);
+      setLikedInitialized(true);
+    } catch (error) {
+      console.error('Failed to load liked posts:', error);
+    } finally {
+      setLoadingLiked(false);
+    }
+  }, [userId, loadingLiked, likedInitialized]);
+
+  const loadMoreLiked = useCallback(async () => {
+    if (loadingLikedMore || !likedHasMore || !likedNextCursor) return;
+
+    try {
+      setLoadingLikedMore(true);
+      const postsData = await api.getUserLikedPosts(userId, 20, likedNextCursor);
+      setLikedPosts((prev) => [...prev, ...postsData.posts]);
+      setLikedNextCursor(postsData.nextCursor);
+      setLikedHasMore(postsData.hasMore);
+    } catch (error) {
+      console.error('Failed to load more liked items:', error);
+    } finally {
+      setLoadingLikedMore(false);
+    }
+  }, [userId, loadingLikedMore, likedHasMore, likedNextCursor]);
 
   useEffect(() => {
     loadProfile();
   }, [loadProfile]);
+
+  useEffect(() => {
+    if (activeTab === 'liked' && !likedInitialized) {
+      loadLikedInitial();
+    }
+  }, [activeTab, likedInitialized, loadLikedInitial]);
 
   const handleFollowToggle = async () => {
     try {
@@ -111,6 +173,25 @@ export function UserProfileScreen() {
     }
   };
 
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dx < -50 && activeTab === 'posted') {
+            setActiveTab('liked');
+            return;
+          }
+
+          if (gesture.dx > 50 && activeTab === 'liked') {
+            setActiveTab('posted');
+          }
+        },
+      }),
+    [activeTab],
+  );
+
   const renderHeader = () => {
     if (!profile) return null;
 
@@ -121,9 +202,7 @@ export function UserProfileScreen() {
             <Image source={{ uri: profile.avatarUrl }} style={styles.avatar} />
           ) : (
             <View style={[styles.avatar, styles.avatarPlaceholder]}>
-              <Text style={styles.avatarText}>
-                {profile.displayName.charAt(0).toUpperCase()}
-              </Text>
+              <Text style={styles.avatarText}>{profile.displayName.charAt(0).toUpperCase()}</Text>
             </View>
           )}
           <Text style={styles.displayName}>{profile.displayName}</Text>
@@ -150,29 +229,51 @@ export function UserProfileScreen() {
             style={[styles.button, isFollowing ? styles.buttonSecondary : styles.buttonPrimary]}
             onPress={handleFollowToggle}
           >
-            <Text style={[styles.buttonText, isFollowing && styles.buttonTextSecondary]}>
-              {isFollowing ? 'Following' : 'Follow'}
-            </Text>
+            <LineIcon
+              name={isFollowing ? 'following' : 'follow'}
+              color={isFollowing ? '#666' : '#fff'}
+              size={17}
+            />
           </Pressable>
 
           <Pressable
             style={[styles.button, styles.buttonSecondary, styles.reportButton]}
             onPress={() => setShowReportModal(true)}
           >
-            <Text style={styles.buttonTextSecondary}>Report</Text>
+            <LineIcon name="report" color="#666" size={17} />
           </Pressable>
         </View>
 
-        <View style={styles.divider} />
+        <View style={styles.postTabs}>
+          <Pressable
+            style={[styles.postTab, activeTab === 'posted' && styles.postTabActive]}
+            onPress={() => setActiveTab('posted')}
+          >
+            <LineIcon
+              name="grid"
+              color={activeTab === 'posted' ? '#000' : '#999'}
+              size={16}
+            />
+          </Pressable>
+          <Pressable
+            style={[styles.postTab, activeTab === 'liked' && styles.postTabActive]}
+            onPress={() => setActiveTab('liked')}
+          >
+            <LineIcon
+              name="heart"
+              color={activeTab === 'liked' ? '#000' : '#999'}
+              size={16}
+            />
+          </Pressable>
+        </View>
+
+        <Text style={styles.swipeHint}>Swipe left or right to switch tabs</Text>
       </View>
     );
   };
 
   const renderPost = ({ item }: { item: Post }) => (
-    <Pressable
-      style={styles.gridItem}
-      onPress={() => (navigation as any).navigate('PostDetail', { postId: item.id })}
-    >
+    <Pressable style={styles.gridItem} onPress={() => navigation.navigate('PostDetail', { postId: item.id })}>
       <Image source={{ uri: item.imageUrls[0] }} style={styles.gridImage} />
       {item.imageUrls.length > 1 && (
         <View style={styles.multipleIndicator}>
@@ -181,6 +282,37 @@ export function UserProfileScreen() {
       )}
     </Pressable>
   );
+
+  const handleLoadMore = () => {
+    if (activeTab === 'posted') {
+      loadMorePosted();
+      return;
+    }
+
+    loadMoreLiked();
+  };
+
+  const currentPosts = activeTab === 'posted' ? postedPosts : likedPosts;
+  const loadingMore = activeTab === 'posted' ? loadingPostedMore : loadingLikedMore;
+
+  const renderEmptyState = () => {
+    if (activeTab === 'liked' && loadingLiked) {
+      return (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="small" color="#000" />
+          <Text style={styles.emptyText}>Loading liked posts...</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.emptyContainer}>
+        <Text style={styles.emptyText}>
+          {activeTab === 'posted' ? 'No posts yet.' : 'No liked posts yet.'}
+        </Text>
+      </View>
+    );
+  };
 
   if (loading) {
     return (
@@ -191,15 +323,17 @@ export function UserProfileScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} {...panResponder.panHandlers}>
       <FlatList
-        data={posts}
+        key={activeTab}
+        data={currentPosts}
         renderItem={renderPost}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmptyState}
         numColumns={3}
         columnWrapperStyle={styles.gridRow}
-        onEndReached={loadMorePosts}
+        onEndReached={handleLoadMore}
         onEndReachedThreshold={0.5}
         ListFooterComponent={
           loadingMore ? (
@@ -233,7 +367,7 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,
     paddingTop: 20,
-    paddingBottom: 16,
+    paddingBottom: 10,
   },
   avatarSection: {
     alignItems: 'center',
@@ -313,10 +447,46 @@ const styles = StyleSheet.create({
   buttonTextSecondary: {
     color: '#000',
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#e0e0e0',
+  postTabs: {
+    flexDirection: 'row',
     marginTop: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  postTab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  postTabActive: {
+    borderBottomColor: '#000',
+  },
+  postTabText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#666',
+  },
+  postTabTextActive: {
+    color: '#000',
+    fontWeight: '700',
+  },
+  swipeHint: {
+    marginTop: 8,
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#999',
+  },
+  emptyContainer: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    marginTop: 8,
+    color: '#666',
+    fontSize: 14,
   },
   gridRow: {
     gap: 1,

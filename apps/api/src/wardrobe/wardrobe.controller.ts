@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Delete, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { BuilderWardrobeItemSourceSchema } from '@fashion/shared';
 import { WardrobeService } from './wardrobe.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -23,7 +24,21 @@ export class WardrobeController {
     @Request() req: AuthRequest,
     @Query('category') category?: string,
     @Query('color') color?: string,
+    @Query('filter') filter?: string,
+    @Query('source') source?: string,
+    @Query('mode') mode?: string,
   ) {
+    if (mode === 'builder' || filter !== undefined || source !== undefined) {
+      const normalizedSource =
+        source && source !== 'all'
+          ? BuilderWardrobeItemSourceSchema.parse(source)
+          : source === 'all'
+            ? 'all'
+            : undefined;
+
+      return this.wardrobeService.getBuilderWardrobe(req.user.userId, filter, normalizedSource);
+    }
+
     return this.wardrobeService.getWardrobe(req.user.userId, category, color);
   }
 

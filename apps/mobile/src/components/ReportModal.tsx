@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { ReportReason } from '@fashion/shared';
+import { LineIcon } from './LineIcon';
 
 interface ReportModalProps {
   visible: boolean;
@@ -100,7 +101,7 @@ export function ReportModal({ visible, onClose, onSubmit, targetType }: ReportMo
               style={[styles.button, styles.buttonSecondary]}
               onPress={handleClose}
             >
-              <Text style={styles.buttonTextSecondary}>Cancel</Text>
+              <LineIcon name="close" style={styles.buttonTextSecondary} />
             </Pressable>
             <Pressable
               style={[
@@ -111,9 +112,10 @@ export function ReportModal({ visible, onClose, onSubmit, targetType }: ReportMo
               onPress={handleSubmit}
               disabled={!selectedReason}
             >
-              <Text style={[styles.buttonText, !selectedReason && styles.buttonTextDisabled]}>
-                Submit Report
-              </Text>
+              <LineIcon
+                name="report"
+                style={[styles.buttonText, !selectedReason && styles.buttonTextDisabled]}
+              />
             </Pressable>
           </View>
         </View>

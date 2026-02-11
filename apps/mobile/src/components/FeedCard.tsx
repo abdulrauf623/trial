@@ -7,15 +7,17 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Post } from '@fashion/shared';
+import { LineIcon } from './LineIcon';
 
 interface FeedCardProps {
   post: Post;
   width: number;
   onPress: () => void;
   onLike: () => void;
+  onCreatorPress: () => void;
 }
 
-export function FeedCard({ post, width, onPress, onLike }: FeedCardProps) {
+export function FeedCard({ post, width, onPress, onLike, onCreatorPress }: FeedCardProps) {
   const imageHeight = width * 1.4; // 1:1.4 aspect ratio
   const firstImage = post.imageUrls[0];
 
@@ -38,7 +40,11 @@ export function FeedCard({ post, width, onPress, onLike }: FeedCardProps) {
       )}
 
       <View style={styles.overlay}>
-        <View style={styles.creatorRow}>
+        <TouchableOpacity
+          style={styles.creatorRow}
+          onPress={onCreatorPress}
+          activeOpacity={0.8}
+        >
           {post.creator.avatarUrl ? (
             <Image
               source={{ uri: post.creator.avatarUrl }}
@@ -54,7 +60,7 @@ export function FeedCard({ post, width, onPress, onLike }: FeedCardProps) {
           <Text style={styles.creatorName} numberOfLines={1}>
             {post.creator.displayName}
           </Text>
-        </View>
+        </TouchableOpacity>
 
         {post.caption && (
           <Text style={styles.caption} numberOfLines={2}>
@@ -68,7 +74,7 @@ export function FeedCard({ post, width, onPress, onLike }: FeedCardProps) {
             onPress={onLike}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Text style={styles.likeIcon}>{post.isLikedByMe ? '❤️' : '🤍'}</Text>
+            <LineIcon name={post.isLikedByMe ? 'heartFilled' : 'heart'} style={styles.likeIcon} />
             <Text style={styles.likeCount}>{post.likeCount}</Text>
           </TouchableOpacity>
 
