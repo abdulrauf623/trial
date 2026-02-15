@@ -13,6 +13,7 @@ import {
 import sharp from 'sharp';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { ProcessingService } from '../processing/processing.service';
 import { deriveFormalityScore, inferSeasonTags } from '../user-garments/garment-metadata.util';
 import { EngineGarment, generateCandidateOutfits } from './outfit-engine';
 
@@ -38,11 +39,22 @@ interface BuilderSourceRow extends BuilderWardrobeItem {
   sourceRefId: string | null;
 }
 
+type BuilderSlot =
+  | 'top'
+  | 'bottom'
+  | 'shoes'
+  | 'onepiece'
+  | 'outerwear'
+  | 'midlayer'
+  | 'accessory'
+  | 'unknown';
+
 @Injectable()
 export class OutfitsService {
   constructor(
     private prisma: PrismaService,
     private storage: StorageService,
+    private processing: ProcessingService,
   ) {}
 
   // ===== Outfit recommendations (existing engine) =====
@@ -171,6 +183,13 @@ export class OutfitsService {
     return this.getCreatedOutfit(userId, outfit.id);
   }
 
+  async createRandomOutfit(userId: string): Promise<{ outfit: CreatedOutfit }> {
+    const sources = await this.listBuilderSources(userId);
+    const input = this.buildRandomOutfitInput(sources);
+    const created = await this.createOutfit(userId, input);
+    return this.renderOutfit(userId, created.id);
+  }
+
   async updateOutfit(userId: string, outfitId: string, input: UpdateOutfitInput): Promise<CreatedOutfit> {
     const existing = await this.prisma.createdOutfit.findFirst({
       where: {
@@ -246,7 +265,7 @@ export class OutfitsService {
       throw new BadRequestException('Cannot render an outfit without items');
     }
 
-    const buffer = await this.renderOutfitToBuffer(outfit.backgroundStyle, outfit.items);
+    const buffer = await this.renderOutfitToBuffer(userId, outfit.backgroundStyle, outfit.items);
     const coverImageUrl = await this.storage.uploadBuffer(
       userId,
       outfit.id,
@@ -426,40 +445,293 @@ export class OutfitsService {
     });
   }
 
-  private async renderOutfitToBuffer(backgroundStyle: string, items: any[]): Promise<Buffer> {
+  private buildRandomOutfitInput(sources: BuilderSourceRow[]): CreateOutfitInput {
+    const bySlot = this.splitBuilderSourcesBySlot(sources);
+    const topCandidates = bySlot.top.length > 0 ? bySlot.top : bySlot.midlayer;
+    const layerCandidates = bySlot.top.length > 0 ? bySlot.midlayer : [];
+    const canBuildTwoPiece = topCandidates.length > 0 && bySlot.bottom.length > 0 && bySlot.shoes.length > 0;
+    const canBuildOnePiece = bySlot.onepiece.length > 0 && bySlot.shoes.length > 0;
+
+    if (!canBuildTwoPiece && !canBuildOnePiece) {
+      throw new BadRequestException(
+        'Need enough wardrobe pieces to build a full outfit. Add top + bottom + shoes, or one-piece + shoes.',
+      );
+    }
+
+    const picked: BuilderSourceRow[] = [];
+    const useOnePiece = canBuildOnePiece && (!canBuildTwoPiece || Math.random() < 0.35);
+
+    if (useOnePiece) {
+      picked.push(pickRandom(bySlot.onepiece));
+      picked.push(pickRandom(bySlot.shoes));
+      if (bySlot.outerwear.length > 0 && Math.random() < 0.45) {
+        picked.push(pickRandom(bySlot.outerwear));
+      }
+      if (bySlot.accessory.length > 0 && Math.random() < 0.35) {
+        picked.push(pickRandom(bySlot.accessory));
+      }
+    } else {
+      picked.push(pickRandom(topCandidates));
+      picked.push(pickRandom(bySlot.bottom));
+      picked.push(pickRandom(bySlot.shoes));
+      if (layerCandidates.length > 0 && Math.random() < 0.35) {
+        picked.push(pickRandom(layerCandidates));
+      }
+      if (bySlot.outerwear.length > 0 && Math.random() < 0.35) {
+        picked.push(pickRandom(bySlot.outerwear));
+      }
+      if (bySlot.accessory.length > 0 && Math.random() < 0.3) {
+        picked.push(pickRandom(bySlot.accessory));
+      }
+    }
+
+    const unique = Array.from(new Map(picked.map((item) => [item.id, item])).values());
+    const positioned = this.positionRandomOutfitItems(unique);
+
+    return {
+      name: `Random Outfit ${new Date().toISOString().slice(5, 10).replace('-', '/')}`,
+      backgroundStyle: 'solid',
+      items: positioned,
+    };
+  }
+
+  private splitBuilderSourcesBySlot(sources: BuilderSourceRow[]): Record<BuilderSlot, BuilderSourceRow[]> {
+    const buckets: Record<BuilderSlot, BuilderSourceRow[]> = {
+      top: [],
+      bottom: [],
+      shoes: [],
+      onepiece: [],
+      outerwear: [],
+      midlayer: [],
+      accessory: [],
+      unknown: [],
+    };
+
+    for (const source of sources) {
+      const slot = slotOfBuilderSource(source.category);
+      buckets[slot].push(source);
+    }
+
+    return buckets;
+  }
+
+  private positionRandomOutfitItems(
+    selected: BuilderSourceRow[],
+  ): Array<{
+    wardrobeItemId: string;
+    x: number;
+    y: number;
+    scale: number;
+    rotation: number;
+    zIndex: number;
+    mirror: boolean;
+    labelText?: string | null | undefined;
+    labelVisible: boolean;
+  }> {
+    const withSlots = selected.map((item) => ({
+      item,
+      slot: slotOfBuilderSource(item.category),
+    }));
+
+    const hasOnePiece = withSlots.some(({ slot }) => slot === 'onepiece');
+
+    const baseBySlot: Partial<
+      Record<
+        BuilderSlot,
+        {
+          x: number;
+          y: number;
+          scale: number;
+          zIndex: number;
+        }
+      >
+    > = hasOnePiece
+      ? {
+          onepiece: { x: 0.5, y: 0.48, scale: 1.08, zIndex: 2 },
+          shoes: { x: 0.5, y: 0.82, scale: 1.02, zIndex: 1 },
+          outerwear: { x: 0.5, y: 0.44, scale: 1.1, zIndex: 3 },
+          accessory: { x: 0.73, y: 0.28, scale: 0.72, zIndex: 4 },
+          midlayer: { x: 0.5, y: 0.45, scale: 1.02, zIndex: 3 },
+        }
+      : {
+          top: { x: 0.5, y: 0.32, scale: 1.02, zIndex: 3 },
+          midlayer: { x: 0.5, y: 0.34, scale: 1.02, zIndex: 4 },
+          outerwear: { x: 0.5, y: 0.35, scale: 1.08, zIndex: 5 },
+          bottom: { x: 0.5, y: 0.62, scale: 1.03, zIndex: 2 },
+          shoes: { x: 0.5, y: 0.84, scale: 0.98, zIndex: 1 },
+          accessory: { x: 0.75, y: 0.26, scale: 0.72, zIndex: 6 },
+        };
+
+    return withSlots.map(({ item, slot }, index) => {
+      const fallback = { x: 0.5, y: 0.5, scale: 1, zIndex: index + 1 };
+      const anchor = baseBySlot[slot] || fallback;
+      const jitter = Math.random() * 0.02 - 0.01;
+      const rotation = Math.random() * 8 - 4;
+
+      return {
+        wardrobeItemId: item.id,
+        x: clamp(anchor.x + jitter, 0.1, 0.9),
+        y: clamp(anchor.y + jitter, 0.1, 0.92),
+        scale: clamp(anchor.scale + (Math.random() * 0.1 - 0.05), 0.3, 2.2),
+        rotation,
+        zIndex: anchor.zIndex,
+        mirror: false,
+        labelVisible: false,
+      };
+    });
+  }
+
+  private async renderOutfitToBuffer(userId: string, backgroundStyle: string, items: any[]): Promise<Buffer> {
     const background = await this.createBackgroundBuffer(backgroundStyle);
     const layers: RenderLayer[] = [];
     const cache = new Map<string, Buffer>();
 
     for (const item of items.sort((a: any, b: any) => a.zIndex - b.zIndex)) {
-      const imageUrl = item.imageCutoutUrl || item.imageOriginalUrl;
-      if (!imageUrl) {
-        continue;
-      }
-
-      const sourceBuffer = await this.fetchImageBuffer(imageUrl, cache);
+      const sourceBuffer = await this.resolveItemLayerBuffer(userId, item, cache);
+      if (!sourceBuffer) continue;
       const prepared = await this.prepareLayer(sourceBuffer, item);
       const shadow = await this.createShadow(prepared.imageBuffer, prepared.width, prepared.height);
 
       if (shadow) {
-        layers.push({
-          input: shadow,
-          left: prepared.left + 8,
-          top: prepared.top + 10,
-        });
+        const shadowLayer = await this.fitLayerToCanvas(shadow, prepared.left + 8, prepared.top + 10);
+        if (shadowLayer) layers.push(shadowLayer);
       }
 
-      layers.push({
-        input: prepared.imageBuffer,
-        left: prepared.left,
-        top: prepared.top,
-      });
+      const imageLayer = await this.fitLayerToCanvas(prepared.imageBuffer, prepared.left, prepared.top);
+      if (imageLayer) layers.push(imageLayer);
     }
 
     return sharp(background)
       .composite(layers)
       .png({ compressionLevel: 9 })
       .toBuffer();
+  }
+
+  private async resolveItemLayerBuffer(
+    userId: string,
+    item: any,
+    cache: Map<string, Buffer>,
+  ): Promise<Buffer | null> {
+    const imageUrl: string | null = item.imageCutoutUrl || item.imageOriginalUrl || null;
+    if (!imageUrl) return null;
+
+    const sourceBuffer = await this.fetchImageBuffer(imageUrl, cache);
+    const shouldAutoIsolate = await this.shouldAutoIsolateItem(item, sourceBuffer);
+    if (!shouldAutoIsolate) {
+      return sourceBuffer;
+    }
+
+    try {
+      const isolated = await this.processing.isolateForOutfit(sourceBuffer);
+      const hasTransparency = await this.bufferHasTransparency(isolated);
+      if (!hasTransparency) {
+        return sourceBuffer;
+      }
+
+      const cropped = await sharp(isolated)
+        .trim()
+        .png()
+        .toBuffer()
+        .catch(() => isolated);
+
+      await this.persistIsolatedCutout(userId, item, cropped);
+      return cropped;
+    } catch (error) {
+      console.warn('[Outfits] Failed to isolate layer, using original image:', error);
+      return sourceBuffer;
+    }
+  }
+
+  private async shouldAutoIsolateItem(item: any, sourceBuffer: Buffer): Promise<boolean> {
+    if (item?.sourceType !== 'saved_post') {
+      return false;
+    }
+
+    if (!item?.imageCutoutUrl || item.imageCutoutUrl === item.imageOriginalUrl) {
+      return true;
+    }
+
+    // If there is no transparent alpha channel, this is likely still a rectangular source image.
+    const hasTransparency = await this.bufferHasTransparency(sourceBuffer);
+    return !hasTransparency;
+  }
+
+  private async bufferHasTransparency(buffer: Buffer): Promise<boolean> {
+    const image = sharp(buffer).rotate();
+    const metadata = await image.metadata();
+    if (!metadata.hasAlpha) {
+      return false;
+    }
+    const stats = await image.stats();
+    const alpha = stats.channels[3];
+    return Boolean(alpha && alpha.min < 255);
+  }
+
+  private async persistIsolatedCutout(userId: string, item: any, isolatedBuffer: Buffer): Promise<void> {
+    if (!item?.id) {
+      return;
+    }
+
+    try {
+      const cutoutUrl = await this.storage.uploadBuffer(
+        userId,
+        item.id,
+        isolatedBuffer,
+        'image/png',
+        'processed',
+        'outfit',
+      );
+
+      await this.prisma.createdOutfitItem.update({
+        where: { id: item.id },
+        data: {
+          imageCutoutUrl: cutoutUrl,
+        },
+      });
+    } catch (error) {
+      console.warn('[Outfits] Failed to persist isolated cutout URL:', error);
+    }
+  }
+
+  /**
+   * Crop/offset a layer so it fits within the canvas bounds.
+   * Returns null if the layer is entirely outside the canvas.
+   */
+  private async fitLayerToCanvas(
+    input: Buffer,
+    left: number,
+    top: number,
+  ): Promise<RenderLayer | null> {
+    const meta = await sharp(input).metadata();
+    const layerW = meta.width || 1;
+    const layerH = meta.height || 1;
+
+    // Calculate the visible region of the layer within the canvas
+    const cropLeft = Math.max(0, -left);
+    const cropTop = Math.max(0, -top);
+    const visibleLeft = Math.max(0, left);
+    const visibleTop = Math.max(0, top);
+    const visibleRight = Math.min(CANVAS_WIDTH, left + layerW);
+    const visibleBottom = Math.min(CANVAS_HEIGHT, top + layerH);
+    const visibleW = visibleRight - visibleLeft;
+    const visibleH = visibleBottom - visibleTop;
+
+    if (visibleW <= 0 || visibleH <= 0) {
+      return null; // Entirely outside the canvas
+    }
+
+    // If the layer already fits, return as-is
+    if (cropLeft === 0 && cropTop === 0 && visibleW === layerW && visibleH === layerH) {
+      return { input, left: visibleLeft, top: visibleTop };
+    }
+
+    // Crop the layer to the visible region
+    const cropped = await sharp(input)
+      .extract({ left: cropLeft, top: cropTop, width: visibleW, height: visibleH })
+      .png()
+      .toBuffer();
+
+    return { input: cropped, left: visibleLeft, top: visibleTop };
   }
 
   private async createBackgroundBuffer(style: string): Promise<Buffer> {
@@ -836,6 +1108,25 @@ function scaleForCategory(category: string | null | undefined): number {
 function containsAny(value: string, needles: string[]): boolean {
   const normalized = value.toLowerCase();
   return needles.some((needle) => normalized.includes(needle));
+}
+
+function slotOfBuilderSource(category: string | null | undefined): BuilderSlot {
+  const value = String(category || '').toLowerCase();
+  if (containsAny(value, ['dress', 'jumpsuit', 'romper', 'overall'])) return 'onepiece';
+  if (containsAny(value, ['shoe', 'sneaker', 'boot', 'loafer', 'heel', 'sandal'])) return 'shoes';
+  if (containsAny(value, ['coat', 'jacket', 'blazer', 'trench', 'parka', 'outerwear'])) return 'outerwear';
+  if (containsAny(value, ['hoodie', 'cardigan', 'vest', 'sweater'])) return 'midlayer';
+  if (containsAny(value, ['pant', 'trouser', 'jean', 'skirt', 'short', 'bottom'])) return 'bottom';
+  if (containsAny(value, ['bag', 'hat', 'belt', 'scarf', 'accessory', 'jewelry', 'watch'])) return 'accessory';
+  if (containsAny(value, ['top', 'shirt', 'tee', 'tshirt', 'blouse', 'tank'])) return 'top';
+  return 'unknown';
+}
+
+function pickRandom<T>(items: T[]): T {
+  if (items.length === 0) {
+    throw new BadRequestException('Not enough wardrobe items to build a random outfit.');
+  }
+  return items[Math.floor(Math.random() * items.length)];
 }
 
 function clamp(value: number, min: number, max: number): number {

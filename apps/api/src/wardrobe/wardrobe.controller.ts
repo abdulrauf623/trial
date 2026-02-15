@@ -14,6 +14,11 @@ interface AuthRequest extends Request {
 export class WardrobeController {
   constructor(private wardrobeService: WardrobeService) {}
 
+  @Get('worth')
+  async getWardrobeWorth(@Request() req: AuthRequest) {
+    return this.wardrobeService.getWardrobeWorth(req.user.userId);
+  }
+
   @Get('filters')
   async getFilterOptions(@Request() req: AuthRequest) {
     return this.wardrobeService.getFilterOptions(req.user.userId);

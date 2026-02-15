@@ -50,4 +50,10 @@ export class UserGarmentsController {
     await this.userGarmentsService.deleteGarment(req.user.userId, garmentId);
     return { success: true };
   }
+
+  @Post(':garmentId/ai-render')
+  async generateAiRender(@Request() req: AuthRequest, @Param('garmentId') garmentId: string) {
+    const garment = await this.userGarmentsService.generateAiRender(req.user.userId, garmentId);
+    return { garment };
+  }
 }

@@ -9,6 +9,7 @@ import { LoginScreen } from '../screens/auth/LoginScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
 import { ExploreScreen } from '../screens/tabs/ExploreScreen';
 import { WardrobeScreen } from '../screens/tabs/WardrobeScreen';
+import { CalendarScreen } from '../screens/tabs/CalendarScreen';
 import { ProfileScreen } from '../screens/tabs/ProfileScreen';
 import { PostDetailScreen } from '../screens/PostDetailScreen';
 import { UserProfileScreen } from '../screens/UserProfileScreen';
@@ -22,7 +23,7 @@ import { CreatePostScreen } from '../screens/CreatePostScreen';
 import { StyleOnboardingScreen } from '../screens/StyleOnboardingScreen';
 import { RootStackParamList, AuthStackParamList, MainTabParamList } from './types';
 import { useAppTheme } from '../theme';
-import { LineIcon } from '../components/LineIcon';
+import { Icon } from '../components/Icon';
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -64,16 +65,20 @@ function MainNavigator() {
         sceneContainerStyle: {
           backgroundColor: theme.colors.background,
         },
-        tabBarIcon: ({ color, size }) => {
+        tabBarIcon: ({ color }) => {
           if (route.name === 'Explore') {
-            return <LineIcon name="search" size={size} color={color} />;
+            return <Icon name="compass" size={26} color={color} weight="regular" />;
           }
 
           if (route.name === 'Wardrobe') {
-            return <LineIcon name="wardrobe" size={size} color={color} />;
+            return <Icon name="hanger" size={26} color={color} weight="regular" />;
           }
 
-          return <LineIcon name="profile" size={size} color={color} />;
+          if (route.name === 'Calendar') {
+            return <Icon name="calendar" size={26} color={color} weight="regular" />;
+          }
+
+          return <Icon name="user" size={26} color={color} weight="regular" />;
         },
       })}
     >
@@ -88,6 +93,11 @@ function MainNavigator() {
         options={{ title: 'Wardrobe' }}
       />
       <MainTab.Screen
+        name="Calendar"
+        component={CalendarScreen}
+        options={{ title: 'Calendar' }}
+      />
+      <MainTab.Screen
         name="Profile"
         component={ProfileScreen}
         options={{ title: 'Profile' }}
@@ -99,7 +109,7 @@ function MainNavigator() {
 export function RootNavigator() {
   const { user, loading } = useAuth();
   const { theme } = useAppTheme();
-  const [checkingOnboarding, setCheckingOnboarding] = useState(false);
+  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   useEffect(() => {
@@ -115,7 +125,6 @@ export function RootNavigator() {
       }
 
       try {
-        setCheckingOnboarding(true);
         const [styleProfileResponse, skipped] = await Promise.all([
           api.getStyleProfile(),
           getOnboardingSkipped(user.id),

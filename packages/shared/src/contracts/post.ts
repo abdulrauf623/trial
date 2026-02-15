@@ -22,10 +22,22 @@ export const ClothingItemSchema = z.object({
   productUrl: z.string().url().nullable(),
   source: z.enum(['creator', 'ai_detected']),
   confidence: z.number().min(0).max(1).nullable(),
+  imageUrl: z.string().url().nullable().optional(),
   createdAt: z.string(),
 });
 
 export type ClothingItem = z.infer<typeof ClothingItemSchema>;
+
+export const PostTaggedGarmentSchema = z.object({
+  id: z.string().uuid(),
+  category: z.string().nullable(),
+  brand: z.string().nullable(),
+  name: z.string().nullable(),
+  thumbnailUrl: z.string().url().nullable(),
+  removedBgUrl: z.string().url().nullable(),
+});
+
+export type PostTaggedGarment = z.infer<typeof PostTaggedGarmentSchema>;
 
 export const PostSchema = z.object({
   id: z.string().uuid(),
@@ -42,6 +54,7 @@ export const PostSchema = z.object({
   isLikedByMe: z.boolean(),
   isSavedByMe: z.boolean().optional(),
   clothingItems: z.array(ClothingItemSchema).optional(),
+  taggedGarments: z.array(PostTaggedGarmentSchema).optional(),
   createdAt: z.string(),
 });
 

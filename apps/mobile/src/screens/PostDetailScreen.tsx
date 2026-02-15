@@ -13,12 +13,15 @@ import {
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ClothingItem, Post } from '@fashion/shared';
+import { ClothingItem, Post, PostTaggedGarment } from '@fashion/shared';
 import { RootStackParamList } from '../navigation/types';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useAppTheme } from '../theme';
 import { LineIcon } from '../components/LineIcon';
+import { prepareWardrobeAsset } from '../wardrobe/pipeline/prepareAsset';
+import { wardrobeAssetRepository } from '../wardrobe/storage/repository';
+import { syncRemoteGarmentsToLocal } from '../wardrobe/sync/remoteSync';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PostDetail'>;
 
@@ -37,6 +40,7 @@ export function PostDetailScreen({ route, navigation }: Props) {
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [addedItems, setAddedItems] = useState<Record<string, boolean>>({});
+  const [addedTaggedGarments, setAddedTaggedGarments] = useState<Record<string, boolean>>({});
 
   const heroHeight = Math.round(width * FALLBACK_HERO_RATIO);
   const heroImageUri = post?.imageUrls[0] ?? null;
@@ -47,6 +51,8 @@ export function PostDetailScreen({ route, navigation }: Props) {
       const data = await api.getPost(postId);
       setPost(data);
       setIsSaved(Boolean(data.isSavedByMe));
+      setAddedItems({});
+      setAddedTaggedGarments({});
       setError(null);
 
       if (data.creator.id !== user?.id) {
@@ -85,27 +91,6 @@ export function PostDetailScreen({ route, navigation }: Props) {
     }
   }, [post]);
 
-  const handleSave = useCallback(async () => {
-    if (!post) return;
-
-    try {
-      if (isSaved) {
-        await api.unsavePost(post.id);
-        setIsSaved(false);
-      } else {
-        await api.savePost(post.id);
-        setIsSaved(true);
-        const itemCount = post.clothingItems?.length ?? 0;
-        if (itemCount > 0) {
-          Alert.alert('Saved', `Post saved and ${itemCount} tagged item${itemCount === 1 ? '' : 's'} added to your wardrobe.`);
-        }
-      }
-    } catch (saveError) {
-      console.error('Failed to save post:', saveError);
-      Alert.alert('Error', 'Could not update save status.');
-    }
-  }, [isSaved, post]);
-
   const handleShare = useCallback(async () => {
     if (!post) return;
     try {
@@ -121,6 +106,21 @@ export function PostDetailScreen({ route, navigation }: Props) {
   const handleCreatorPress = useCallback(() => {
     if (!post) return;
     navigation.replace('UserProfile', { userId: post.creator.id });
+  }, [navigation, post]);
+
+  const handleHeroTapToSearch = useCallback(() => {
+    if (!post) return;
+    const firstItem = post.clothingItems?.[0];
+    if (!firstItem?.id) {
+      Alert.alert('No searchable item', 'This post has no detected clothing item to search yet.');
+      return;
+    }
+
+    navigation.navigate('Search', {
+      mode: 'similar',
+      itemId: firstItem.id,
+      sourcePostId: post.id,
+    });
   }, [navigation, post]);
 
   const handleFollowToggle = useCallback(async () => {
@@ -143,19 +143,125 @@ export function PostDetailScreen({ route, navigation }: Props) {
     }
   }, [followLoading, isFollowing, post, user?.id]);
 
+  const addTaggedGarmentToLocalWardrobe = useCallback(
+    async (garment: PostTaggedGarment) => {
+      if (!post) return;
+      const sourceUri = garment.removedBgUrl;
+      if (!sourceUri) return;
+
+      try {
+        const localAsset = await prepareWardrobeAsset({
+          originalUri: sourceUri,
+          processedInputUri: garment.removedBgUrl || undefined,
+          categoryHint: garment.category || undefined,
+        });
+        localAsset.id = `saved_${post.id}_${garment.id}`;
+        localAsset.sourceGarmentId = undefined;
+        await wardrobeAssetRepository.upsert(localAsset);
+      } catch (error) {
+        console.log('[PostDetail] Failed local sync for tagged garment');
+      }
+    },
+    [post],
+  );
+
+  const scheduleRemoteSync = useCallback(() => {
+    // Explore-saved clothing items are imported + background-processed asynchronously on backend.
+    // Poll a few times to pull ready cutouts into local Uploaded storage.
+    void (async () => {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        try {
+          await syncRemoteGarmentsToLocal({ limit: 240 });
+        } catch (error) {
+          console.log('[PostDetail] Remote wardrobe sync attempt failed');
+        }
+        if (attempt < 5) {
+          await delay(2000);
+        }
+      }
+    })();
+  }, []);
+
+  const syncSavedPostItemsToLocalWardrobe = useCallback(
+    async (postToSync: Post) => {
+      if (postToSync.taggedGarments?.length) {
+        await Promise.all(postToSync.taggedGarments.map((garment) => addTaggedGarmentToLocalWardrobe(garment)));
+      }
+      scheduleRemoteSync();
+    },
+    [addTaggedGarmentToLocalWardrobe, scheduleRemoteSync],
+  );
+
+  const handleSave = useCallback(async () => {
+    if (!post) return;
+
+    try {
+      if (isSaved) {
+        await api.unsavePost(post.id);
+        setIsSaved(false);
+      } else {
+        await api.savePost(post.id);
+        setIsSaved(true);
+        await syncSavedPostItemsToLocalWardrobe(post);
+        const itemCount = post.taggedGarments?.length ?? post.clothingItems?.length ?? 0;
+        if (post.taggedGarments?.length) {
+          setAddedTaggedGarments(
+            post.taggedGarments.reduce<Record<string, boolean>>((accumulator, garment) => {
+              accumulator[garment.id] = true;
+              return accumulator;
+            }, {}),
+          );
+        } else if (post.clothingItems?.length) {
+          setAddedItems(
+            post.clothingItems.reduce<Record<string, boolean>>((accumulator, item) => {
+              accumulator[item.id] = true;
+              return accumulator;
+            }, {}),
+          );
+        }
+        if (itemCount > 0) {
+          Alert.alert('Saved', `Post saved and ${itemCount} tagged item${itemCount === 1 ? '' : 's'} added to your wardrobe.`);
+        }
+      }
+    } catch (saveError) {
+      console.error('Failed to save post:', saveError);
+      Alert.alert('Error', 'Could not update save status.');
+    }
+  }, [isSaved, post, syncSavedPostItemsToLocalWardrobe]);
+
   const handleAddTaggedItem = useCallback(
     async (item: ClothingItem) => {
       if (addedItems[item.id]) return;
       try {
         await api.addToWardrobe(item.id);
         setAddedItems((previous) => ({ ...previous, [item.id]: true }));
+        scheduleRemoteSync();
       } catch (addError) {
         console.error('Failed to add tagged item:', addError);
         Alert.alert('Error', 'Could not add this item to your wardrobe.');
       }
     },
-    [addedItems],
+    [addedItems, scheduleRemoteSync],
   );
+
+  const handleAddTaggedGarment = useCallback(
+    async (garment: PostTaggedGarment) => {
+      if (!post || addedTaggedGarments[garment.id]) return;
+      try {
+        await api.saveTaggedGarment(post.id, garment.id);
+        setAddedTaggedGarments((previous) => ({ ...previous, [garment.id]: true }));
+        await addTaggedGarmentToLocalWardrobe(garment);
+        scheduleRemoteSync();
+      } catch (addError) {
+        console.error('Failed to add tagged garment:', addError);
+        Alert.alert('Error', 'Could not add this item to your wardrobe.');
+      }
+    },
+    [addTaggedGarmentToLocalWardrobe, addedTaggedGarments, post, scheduleRemoteSync],
+  );
+
+  const displayTaggedGarments = post?.taggedGarments ?? [];
+  const displayClothingItems = displayTaggedGarments.length > 0 ? [] : post?.clothingItems ?? [];
 
   const styles = useMemo(
     () =>
@@ -195,6 +301,20 @@ export function PostDetailScreen({ route, navigation }: Props) {
         heroImage: {
           width: '100%',
           height: '100%',
+        },
+        tapSearchHint: {
+          position: 'absolute',
+          bottom: 10,
+          left: 10,
+          borderRadius: 20,
+          backgroundColor: theme.colors.overlay,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+        },
+        tapSearchHintText: {
+          color: '#ffffff',
+          fontSize: 12,
+          fontWeight: '600',
         },
         body: {
           paddingTop: 16,
@@ -334,15 +454,30 @@ export function PostDetailScreen({ route, navigation }: Props) {
         },
         taggedTopRow: {
           flexDirection: 'row',
-          justifyContent: 'space-between',
           alignItems: 'center',
           gap: 10,
+        },
+        taggedImage: {
+          width: 52,
+          height: 68,
+          borderRadius: 8,
+          backgroundColor: theme.colors.surfaceMuted,
+        },
+        taggedImageFallback: {
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        taggedImageFallbackIcon: {
+          color: theme.colors.textSecondary,
+          fontSize: 20,
+        },
+        taggedContent: {
+          flex: 1,
         },
         taggedName: {
           color: theme.colors.textPrimary,
           fontSize: 14,
           fontWeight: '600',
-          flex: 1,
         },
         taggedMeta: {
           color: theme.colors.textSecondary,
@@ -401,9 +536,14 @@ export function PostDetailScreen({ route, navigation }: Props) {
       </View>
 
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.heroFrame}>
+        <Pressable style={styles.heroFrame} onPress={handleHeroTapToSearch} disabled={!post || loading}>
           {heroImageUri ? <Image source={{ uri: heroImageUri }} style={styles.heroImage} resizeMode="cover" /> : null}
-        </View>
+          {post?.clothingItems?.length ? (
+            <View style={styles.tapSearchHint}>
+              <Text style={styles.tapSearchHintText}>Tap photo to search similar</Text>
+            </View>
+          ) : null}
+        </Pressable>
 
         <View style={styles.body}>
           {loading ? (
@@ -476,13 +616,53 @@ export function PostDetailScreen({ route, navigation }: Props) {
                 )}
               </View>
 
-              {post.clothingItems && post.clothingItems.length > 0 && (
+              {(displayTaggedGarments.length > 0 || displayClothingItems.length > 0) && (
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Tagged Clothes</Text>
-                  {post.clothingItems.map((item) => (
+                  {displayTaggedGarments.map((garment) => {
+                    const previewUrl = garment.removedBgUrl || garment.thumbnailUrl;
+                    return (
+                      <View style={styles.taggedItem} key={garment.id}>
+                        <View style={styles.taggedTopRow}>
+                          {previewUrl ? (
+                            <Image source={{ uri: previewUrl }} style={styles.taggedImage} resizeMode="contain" />
+                          ) : (
+                            <View style={[styles.taggedImage, styles.taggedImageFallback]}>
+                              <LineIcon name="wardrobe" style={styles.taggedImageFallbackIcon} />
+                            </View>
+                          )}
+                          <View style={styles.taggedContent}>
+                            <Text style={styles.taggedName}>{garment.name ?? garment.brand ?? 'Tagged piece'}</Text>
+                            <Text style={styles.taggedMeta}>
+                              {[garment.category, garment.brand].filter(Boolean).join(' • ') || 'No details'}
+                            </Text>
+                          </View>
+                          <Pressable
+                            style={[styles.addButton, addedTaggedGarments[garment.id] && styles.addButtonDone]}
+                            onPress={() => handleAddTaggedGarment(garment)}
+                            disabled={addedTaggedGarments[garment.id]}
+                          >
+                            <LineIcon
+                              name={addedTaggedGarments[garment.id] ? 'check' : 'plus'}
+                              style={styles.addButtonText}
+                            />
+                          </Pressable>
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {displayClothingItems.map((item) => (
                     <View style={styles.taggedItem} key={item.id}>
                       <View style={styles.taggedTopRow}>
-                        <View style={{ flex: 1 }}>
+                        {item.imageUrl ? (
+                          <Image source={{ uri: item.imageUrl }} style={styles.taggedImage} resizeMode="contain" />
+                        ) : (
+                          <View style={[styles.taggedImage, styles.taggedImageFallback]}>
+                            <LineIcon name="wardrobe" style={styles.taggedImageFallbackIcon} />
+                          </View>
+                        )}
+                        <View style={styles.taggedContent}>
                           <Text style={styles.taggedName}>{item.name ?? item.brand ?? 'Tagged piece'}</Text>
                           <Text style={styles.taggedMeta}>
                             {[item.category, item.color].filter(Boolean).join(' • ') || 'No details'}
@@ -493,10 +673,7 @@ export function PostDetailScreen({ route, navigation }: Props) {
                           onPress={() => handleAddTaggedItem(item)}
                           disabled={addedItems[item.id]}
                         >
-                          <LineIcon
-                            name={addedItems[item.id] ? 'check' : 'plus'}
-                            style={styles.addButtonText}
-                          />
+                          <LineIcon name={addedItems[item.id] ? 'check' : 'plus'} style={styles.addButtonText} />
                         </Pressable>
                       </View>
                     </View>
@@ -516,4 +693,10 @@ export function PostDetailScreen({ route, navigation }: Props) {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

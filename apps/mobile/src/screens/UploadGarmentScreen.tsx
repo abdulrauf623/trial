@@ -42,7 +42,7 @@ export function UploadGarmentScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       allowsEditing: true,
       aspect: [3, 4],
       quality: 0.8,

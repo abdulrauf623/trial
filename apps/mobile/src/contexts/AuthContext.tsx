@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { RegisterInput, MeResponse } from '@fashion/shared';
 import { api } from '../services/api';
-import { getToken } from '../services/storage';
+import { getToken, clearToken, clearRefreshToken } from '../services/storage';
 
 interface AuthContextValue {
   user: MeResponse | null;
@@ -18,37 +18,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let mounted = true;
+
+    async function loadUser() {
+      try {
+        const token = await getToken();
+        if (!token) return;
+
+        const userData = await api.getMe();
+        if (mounted) setUser(userData);
+      } catch (error) {
+        console.error('Failed to load user:', error);
+        // Clear stale tokens so next launch doesn't hang again
+        await clearToken();
+        await clearRefreshToken();
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
     loadUser();
+    return () => { mounted = false; };
   }, []);
 
-  async function loadUser() {
-    try {
-      const token = await getToken();
-      if (token) {
-        const userData = await api.getMe();
-        setUser(userData as MeResponse);
-      }
-    } catch (error) {
-      console.error('Failed to load user:', error);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function login(email: string, password: string) {
+  const login = useCallback(async (email: string, password: string) => {
     const response = await api.login({ email, password });
     setUser(response.user);
-  }
+  }, []);
 
-  async function register(data: RegisterInput) {
+  const register = useCallback(async (data: RegisterInput) => {
     const response = await api.register(data);
     setUser(response.user);
-  }
+  }, []);
 
-  async function logout() {
+  const logout = useCallback(async () => {
     await api.logout();
     setUser(null);
-  }
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, register, logout }}>

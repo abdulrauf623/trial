@@ -14,9 +14,20 @@ export interface ProcessingResult {
   detectedTags: string[];
 }
 
+const BG_REMOVAL_TIMEOUT_MS = 30_000;
+
 @Injectable()
 export class ProcessingService {
-  constructor(_config: ConfigService) {}
+  constructor(private config: ConfigService) {}
+
+  /**
+   * Isolate a garment/object for collage rendering.
+   * Returns a PNG buffer; falls back to the original image if isolation fails.
+   */
+  async isolateForOutfit(imageBuffer: Buffer): Promise<Buffer> {
+    const normalized = await sharp(imageBuffer).rotate().png().toBuffer();
+    return this.removeBackground(normalized);
+  }
 
   /**
    * Process a garment image: resize, remove background, extract colors
@@ -47,9 +58,9 @@ export class ProcessingService {
       }
     }
 
-    // Step 3: Remove background (simplified - just use the original for now)
-    // In production, you'd call Replicate API or use a background removal model
-    const processedBuffer = await this.removeBackground(image);
+    // Step 3: Remove background using rembg (primary) or remove.bg (fallback)
+    const resizedBuffer = await image.png().toBuffer();
+    const processedBuffer = await this.removeBackground(resizedBuffer);
 
     // Step 4: Create thumbnail (400px)
     const thumbnailBuffer = await sharp(processedBuffer)
@@ -57,7 +68,7 @@ export class ProcessingService {
         fit: 'inside',
         withoutEnlargement: true,
       })
-      .jpeg({ quality: 80 })
+      .png()
       .toBuffer();
 
     console.log('[Processing] Created thumbnail');
@@ -87,37 +98,125 @@ export class ProcessingService {
     };
   }
 
-  /**
-   * Remove background from image
-   * For now, just convert to PNG and return. In production, use Replicate API.
-   */
-  private async removeBackground(image: sharp.Sharp): Promise<Buffer> {
-    // Simplified: Just convert to PNG for now
-    // In production, you would:
-    // 1. Save image to temp file
-    // 2. Call Replicate API with background removal model
-    // 3. Download result
-    // 4. Return buffer
+  private async removeBackground(imageBuffer: Buffer): Promise<Buffer> {
+    // Try rembg (self-hosted Docker service) first
+    const rembgResult = await this.removeBackgroundWithRembg(imageBuffer);
+    if (rembgResult) return rembgResult;
 
-    console.log('[Processing] Background removal (simplified)');
-    return image.png().toBuffer();
+    // Fall back to remove.bg cloud API
+    const removeBgResult = await this.removeBackgroundWithRemoveBg(imageBuffer);
+    if (removeBgResult) return removeBgResult;
+
+    // Last resort: return original as PNG (no background removal)
+    console.warn('[Processing] All background removal services unavailable, returning original image');
+    return imageBuffer;
+  }
+
+  /**
+   * Remove background using self-hosted rembg service
+   */
+  private async removeBackgroundWithRembg(imageBuffer: Buffer): Promise<Buffer | null> {
+    const rembgUrl = this.config.rembgUrl;
+    if (!rembgUrl) return null;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), BG_REMOVAL_TIMEOUT_MS);
+
+    try {
+      console.log(`[Processing] Calling rembg at ${rembgUrl}/api/remove`);
+
+      const formData = new FormData();
+      formData.append('file', new Blob([imageBuffer], { type: 'image/png' }), 'image.png');
+
+      const response = await fetch(`${rembgUrl}/api/remove`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        console.error(`[Processing] rembg returned ${response.status}: ${response.statusText}`);
+        return null;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const result = Buffer.from(arrayBuffer);
+      console.log(`[Processing] rembg success, output size: ${result.length} bytes`);
+      return result;
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error('[Processing] rembg request timed out');
+      } else {
+        console.error('[Processing] rembg failed:', error.message);
+      }
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Remove background using remove.bg cloud API (fallback)
+   */
+  private async removeBackgroundWithRemoveBg(imageBuffer: Buffer): Promise<Buffer | null> {
+    const apiKey = this.config.removeBgApiKey;
+    if (!apiKey) {
+      console.log('[Processing] remove.bg API key not configured, skipping fallback');
+      return null;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), BG_REMOVAL_TIMEOUT_MS);
+
+    try {
+      console.log('[Processing] Calling remove.bg API (fallback)');
+
+      const formData = new FormData();
+      formData.append('image_file', new Blob([imageBuffer], { type: 'image/png' }), 'image.png');
+      formData.append('size', 'auto');
+
+      const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': apiKey,
+        },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'unknown error');
+        console.error(`[Processing] remove.bg returned ${response.status}: ${errorText}`);
+        return null;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const result = Buffer.from(arrayBuffer);
+      console.log(`[Processing] remove.bg success, output size: ${result.length} bytes`);
+      return result;
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error('[Processing] remove.bg request timed out');
+      } else {
+        console.error('[Processing] remove.bg failed:', error.message);
+      }
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /**
    * Extract dominant colors from image
    */
   private async extractDominantColors(buffer: Buffer): Promise<string[]> {
-    // Simple dominant color extraction
-    // In production, use k-means clustering or a library like node-vibrant
-
-    // For now, just return the dominant color from sharp's stats
     const stats = await sharp(buffer).stats();
     const colors = stats.channels.map((channel) => {
       const value = Math.round(channel.mean);
       return value.toString(16).padStart(2, '0');
     });
 
-    const hexColor = `#${colors.join('')}`;
+    const hexColor = `#${colors.slice(0, 3).join('')}`;
     return [hexColor];
   }
 
@@ -129,15 +228,8 @@ export class ProcessingService {
     _buffer: Buffer,
     metadata: sharp.Metadata
   ): Promise<{ category: string; confidence: number }> {
-    // Simplified rule-based detection
-    // In production, you would:
-    // 1. Call OpenAI Vision API or Replicate
-    // 2. Get category predictions with confidence scores
-    // 3. Return top-3 categories
-
     const aspectRatio = metadata.width && metadata.height ? metadata.width / metadata.height : 1;
 
-    // Very basic heuristics
     if (aspectRatio > 1.2) {
       return { category: 'pants', confidence: 0.6 };
     } else if (aspectRatio < 0.8) {
@@ -145,10 +237,6 @@ export class ProcessingService {
     } else {
       return { category: 'tshirt', confidence: 0.5 };
     }
-
-    // In production, replace with:
-    // const result = await this.callVisionAPI(buffer);
-    // return { category: result.topCategory, confidence: result.topConfidence };
   }
 
   /**
@@ -158,36 +246,8 @@ export class ProcessingService {
   private async detectAIAttributes(
     _buffer: Buffer
   ): Promise<{ pattern: string | null; material: string | null; tags: string[] }> {
-    // In production, you would:
-    // 1. Convert buffer to base64
-    // 2. Call OpenAI GPT-4 Vision API with a structured prompt
-    // 3. Parse the JSON response with detected attributes
-    //
-    // Example prompt:
-    // "Analyze this clothing item and return a JSON with:
-    //  - pattern: solid, striped, floral, plaid, checkered, etc.
-    //  - material: cotton, denim, wool, leather, silk, polyester, etc.
-    //  - tags: array of occasion tags like casual, formal, business, athletic, summer, winter
-    //  Be concise and only return the JSON."
-    //
-    // const base64Image = buffer.toString('base64');
-    // const response = await openai.chat.completions.create({
-    //   model: 'gpt-4-vision-preview',
-    //   messages: [{
-    //     role: 'user',
-    //     content: [
-    //       { type: 'text', text: 'Analyze this clothing...' },
-    //       { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-    //     ]
-    //   }],
-    //   max_tokens: 300,
-    // });
-    // const result = JSON.parse(response.choices[0].message.content);
-    // return { pattern: result.pattern, material: result.material, tags: result.tags };
-
     console.log('[Processing] AI attribute detection (placeholder)');
 
-    // For now, return placeholder values
     return {
       pattern: 'solid',
       material: 'cotton',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -27,12 +28,13 @@ export function GarmentDetailScreen() {
   const [notes, setNotes] = useState('');
   const [category, setCategory] = useState('');
   const [saving, setSaving] = useState(false);
+  const [generatingAiRender, setGeneratingAiRender] = useState(false);
 
   useEffect(() => {
     loadGarment();
   }, [garmentId]);
 
-  const loadGarment = async () => {
+  async function loadGarment() {
     try {
       const data = await api.getUserGarment(garmentId);
       setGarment(data);
@@ -44,9 +46,9 @@ export function GarmentDetailScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleSave = async () => {
+  async function handleSave() {
     if (!garment) return;
 
     setSaving(true);
@@ -64,16 +66,16 @@ export function GarmentDetailScreen() {
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const handleDelete = () => {
+  function handleDelete() {
     Alert.alert(
       'Delete Garment',
       'Are you sure you want to remove this garment from your wardrobe?',
       [
-        { text: '×', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: '⌫',
+          text: 'Delete',
           style: 'destructive',
           onPress: async () => {
             try {
@@ -86,9 +88,42 @@ export function GarmentDetailScreen() {
             }
           },
         },
-      ]
+      ],
     );
-  };
+  }
+
+  async function handleDownload() {
+    const imageUrl = garment?.processedUrl || garment?.originalUrl;
+    if (!imageUrl) {
+      Alert.alert('No Photo', 'This model has no downloadable photo yet.');
+      return;
+    }
+
+    try {
+      await Share.share({
+        message: imageUrl,
+        url: imageUrl,
+      });
+    } catch (error) {
+      console.error('Failed to open download/share:', error);
+      Alert.alert('Error', 'Failed to open download options');
+    }
+  }
+
+  async function handleGenerateAiRender() {
+    if (!garment) return;
+    setGeneratingAiRender(true);
+    try {
+      const response = await api.generateGarmentAiRender(garment.id);
+      setGarment(response.garment);
+      Alert.alert('Done', 'Generated clean model render and depth image.');
+    } catch (error: any) {
+      console.error('Failed to generate AI render:', error);
+      Alert.alert('Error', error?.message || 'Failed to generate AI render');
+    } finally {
+      setGeneratingAiRender(false);
+    }
+  }
 
   if (loading || !garment) {
     return (
@@ -110,7 +145,6 @@ export function GarmentDetailScreen() {
         />
 
         <View style={styles.content}>
-          {/* Color Palette */}
           {garment.colors.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Colors</Text>
@@ -122,7 +156,6 @@ export function GarmentDetailScreen() {
             </View>
           )}
 
-          {/* Category */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Category</Text>
             {editing ? (
@@ -148,7 +181,6 @@ export function GarmentDetailScreen() {
             )}
           </View>
 
-          {/* Notes */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Notes</Text>
             {editing ? (
@@ -167,7 +199,6 @@ export function GarmentDetailScreen() {
             )}
           </View>
 
-          {/* Processing Status */}
           {garment.status === 'processing' && (
             <View style={styles.statusBanner}>
               <ActivityIndicator color="#666" />
@@ -175,7 +206,24 @@ export function GarmentDetailScreen() {
             </View>
           )}
 
-          {/* Actions */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>AI Clean Model</Text>
+            {garment.aiModelImageUrl ? (
+              <Image source={{ uri: garment.aiModelImageUrl }} style={styles.aiImage} resizeMode="cover" />
+            ) : (
+              <Text style={styles.placeholderText}>Not generated yet</Text>
+            )}
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Depth Image</Text>
+            {garment.aiDepthMapUrl ? (
+              <Image source={{ uri: garment.aiDepthMapUrl }} style={styles.aiImage} resizeMode="cover" />
+            ) : (
+              <Text style={styles.placeholderText}>Not generated yet</Text>
+            )}
+          </View>
+
           <View style={styles.actions}>
             {editing ? (
               <>
@@ -184,11 +232,7 @@ export function GarmentDetailScreen() {
                   onPress={handleSave}
                   disabled={saving}
                 >
-                  {saving ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <LineIcon name="check" style={styles.buttonText} />
-                  )}
+                  {saving ? <ActivityIndicator color="#fff" /> : <LineIcon name="check" style={styles.buttonText} />}
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -209,14 +253,29 @@ export function GarmentDetailScreen() {
                   <LineIcon name="edit" style={styles.buttonText} />
                 </TouchableOpacity>
 
+                <TouchableOpacity style={[styles.button, styles.downloadButton]} onPress={handleDownload}>
+                  <LineIcon name="share" style={[styles.buttonText, styles.downloadButtonText]} />
+                </TouchableOpacity>
+
                 <TouchableOpacity style={[styles.button, styles.deleteButton]} onPress={handleDelete}>
                   <LineIcon name="trash" style={[styles.buttonText, styles.deleteButtonText]} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.button, styles.aiRenderButton]}
+                  onPress={handleGenerateAiRender}
+                  disabled={generatingAiRender}
+                >
+                  {generatingAiRender ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>Generate Clean Model + Depth</Text>
+                  )}
                 </TouchableOpacity>
               </>
             )}
           </View>
 
-          {/* Metadata */}
           <View style={styles.metadata}>
             <Text style={styles.metadataText}>
               Added {new Date(garment.createdAt).toLocaleDateString()}
@@ -242,6 +301,13 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 3 / 4,
     backgroundColor: '#f0f0f0',
+  },
+  aiImage: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+    marginTop: 8,
   },
   content: {
     padding: 16,
@@ -329,10 +395,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ff3b30',
   },
+  downloadButton: {
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  aiRenderButton: {
+    backgroundColor: '#111827',
+  },
   buttonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  downloadButtonText: {
+    color: '#000',
   },
   cancelButtonText: {
     color: '#000',

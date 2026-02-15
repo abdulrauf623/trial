@@ -5,6 +5,46 @@ const prisma = new PrismaClient();
 
 async function main() {
   console.log('🌱 Seeding database...');
+  let clothingImageSeed = 1;
+  const curatedWardrobePhotoIds = [
+    '1469334031218-e382a71b716b',
+    '1475180098004-ca77a66827be',
+    '1483985988355-763728e1935b',
+    '1485968579580-b6d095142e6e',
+    '1487222477894-8943e31ef7b2',
+    '1490481651871-ab68de25d43d',
+    '1496747611176-843222e1e57c',
+    '1503342217505-b0a15ec3261c',
+    '1507679799987-c73779587ccf',
+    '1509631179647-0177331693ae',
+    '1512436991641-6745cdb1723f',
+    '1515886657613-9f3515b0c78f',
+    '1519085360753-af0119f7cbe7',
+    '1521572267360-ee0c2909d518',
+    '1523398002811-999ca8dec234',
+    '1524504388940-b1c1722653e1',
+    '1529139574466-a303027c1d8b',
+    '1539533018447-63fcce2678e3',
+    '1542272604-787c3835535d',
+    '1542291026-7eec264c27ff',
+    '1551028719-00167b16eac5',
+    '1552374196-c4e7ffc6e126',
+    '1554412933-514a83d2f3c8',
+    '1560243563-062bfc001d68',
+    '1591047139829-d91aecb6caea',
+    '1594938291221-94f18cbb5660',
+    '1595777457583-95e059d581b8',
+    '1611312449412-6cefac5dc3e4',
+    '1617127365659-c47fa864d8bc',
+    '1617922001439-4a2e6562f328',
+  ];
+  const nextClothingImageUrl = (keywords?: string[]) => {
+    const index = (clothingImageSeed - 1) % curatedWardrobePhotoIds.length;
+    const id = curatedWardrobePhotoIds[index];
+    clothingImageSeed += 1;
+    const keywordBoost = keywords && keywords.length > 0 ? `&fm=jpg` : '';
+    return `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=1080&h=1350&q=80${keywordBoost}`;
+  };
 
   // Clear existing data
   await prisma.like.deleteMany();
@@ -221,7 +261,7 @@ async function main() {
 
   const starterGarmentSeeds = [
     {
-      imageUrl: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=900',
+      imageUrl: nextClothingImageUrl(['tshirt', 'top', 'clothing', 'apparel']),
       category: 'tshirt',
       subcategory: 'crew-neck',
       colors: ['white'],
@@ -237,7 +277,7 @@ async function main() {
       tags: ['casual', 'weekend'],
     },
     {
-      imageUrl: 'https://images.unsplash.com/photo-1542272604-787c3835535d?w=900',
+      imageUrl: nextClothingImageUrl(['pants', 'trousers', 'clothing', 'apparel']),
       category: 'pants',
       subcategory: 'straight',
       colors: ['black'],
@@ -253,7 +293,7 @@ async function main() {
       tags: ['casual', 'streetwear'],
     },
     {
-      imageUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=900',
+      imageUrl: nextClothingImageUrl(['shoes', 'sneakers', 'footwear', 'fashion']),
       category: 'sneakers',
       subcategory: 'low-top',
       colors: ['white'],
@@ -269,7 +309,7 @@ async function main() {
       tags: ['casual', 'sporty'],
     },
     {
-      imageUrl: 'https://images.unsplash.com/photo-1611312449412-6cefac5dc3e4?w=900',
+      imageUrl: nextClothingImageUrl(['jacket', 'outerwear', 'fashion', 'outfit']),
       category: 'jacket',
       subcategory: 'bomber',
       colors: ['olive'],
@@ -362,8 +402,8 @@ async function main() {
       creatorId: creator1.id,
       caption: 'All black everything 🖤 Leather bomber jacket season',
       imageUrls: [
-        'https://images.unsplash.com/photo-1617127365659-c47fa864d8bc?w=800',
-        'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=800',
+        nextClothingImageUrl(['fashion', 'streetstyle', 'outfit', 'model']),
+        nextClothingImageUrl(['fashion', 'streetstyle', 'outfit', 'model']),
       ],
       tags: ['#ootd', '#streetwear', '#allblack'],
       engagementScore: 15.2,
@@ -399,9 +439,7 @@ async function main() {
     data: {
       creatorId: creator5.id,
       caption: '[STARTER] Core capsule look: tee + trousers + sneakers',
-      imageUrls: [
-        'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=900',
-      ],
+      imageUrls: [nextClothingImageUrl(['outfit', 'casual', 'streetstyle', 'model'])],
       tags: ['#starter', '#outfitbuilder', '#capsule'],
       engagementScore: 99.9,
       clothingItems: {
@@ -448,9 +486,7 @@ async function main() {
     data: {
       creatorId: creator1.id,
       caption: '[STARTER] Layered street look: hoodie + cargo + boots',
-      imageUrls: [
-        'https://images.unsplash.com/photo-1523398002811-999ca8dec234?w=900',
-      ],
+      imageUrls: [nextClothingImageUrl(['outfit', 'layered', 'streetwear', 'model'])],
       tags: ['#starter', '#outfitbuilder', '#layered'],
       engagementScore: 97.5,
       clothingItems: {
@@ -509,9 +545,7 @@ async function main() {
     data: {
       creatorId: creator1.id,
       caption: 'Wide leg pants are back 👌',
-      imageUrls: [
-        'https://images.unsplash.com/photo-1594938291221-94f18cbb5660?w=800',
-      ],
+      imageUrls: [nextClothingImageUrl(['pants', 'fashion', 'outfit', 'model'])],
       tags: ['#fashion', '#minimalist'],
       engagementScore: 22.5,
       clothingItems: {
@@ -537,9 +571,7 @@ async function main() {
     data: {
       creatorId: creator2.id,
       caption: 'Cozy fall vibes 🍂☕',
-      imageUrls: [
-        'https://images.unsplash.com/photo-1539533018447-63fcce2678e3?w=800',
-      ],
+      imageUrls: [nextClothingImageUrl(['sweater', 'fashion', 'outfit', 'model'])],
       tags: ['#fall', '#cozy'],
       engagementScore: 18.7,
       clothingItems: {
@@ -807,12 +839,34 @@ async function main() {
     },
   ];
 
+  const categoryKeywords: Record<string, string[]> = {
+    top: ['wardrobe', 'outfit', 'streetstyle', 'fashion'],
+    shirt: ['shirt', 'wardrobe', 'fashion', 'outfit'],
+    tshirt: ['tshirt', 'tee', 'streetwear', 'wardrobe'],
+    sweater: ['sweater', 'knitwear', 'fashion', 'outfit'],
+    hoodie: ['hoodie', 'streetwear', 'casual', 'outfit'],
+    jacket: ['jacket', 'outerwear', 'fashion', 'wardrobe'],
+    coat: ['coat', 'outerwear', 'wardrobe', 'style'],
+    blazer: ['blazer', 'tailored', 'fashion', 'style'],
+    suit: ['suit', 'formalwear', 'fashion', 'wardrobe'],
+    pants: ['pants', 'trousers', 'fashion', 'streetstyle'],
+    skirt: ['skirt', 'fashion', 'outfit', 'wardrobe'],
+    dress: ['dress', 'fashion', 'runway', 'wardrobe'],
+    shoes: ['shoes', 'footwear', 'sneakers', 'fashion'],
+    boots: ['boots', 'footwear', 'fashion', 'streetstyle'],
+    vest: ['vest', 'layered', 'fashion', 'wardrobe'],
+    set: ['matching set', 'wardrobe', 'fashion', 'outfit'],
+  };
+
   for (const seed of additionalPostSeeds) {
+    const leadCategory = seed.clothingItems?.[0]?.category || '';
     await prisma.post.create({
       data: {
         creatorId: seed.creatorId,
         caption: seed.caption,
-        imageUrls: seed.imageUrls,
+        imageUrls: [nextClothingImageUrl(
+          categoryKeywords[leadCategory] || ['wardrobe', 'outfit', 'streetstyle', 'fashion'],
+        )],
         tags: seed.tags,
         engagementScore: seed.engagementScore,
         clothingItems: {
@@ -825,7 +879,77 @@ async function main() {
     });
   }
 
-  console.log(`✅ Created ${5 + additionalPostSeeds.length} posts with clothing items`);
+  const syntheticCategories = [
+    'top',
+    'shirt',
+    'tshirt',
+    'sweater',
+    'hoodie',
+    'jacket',
+    'pants',
+    'skirt',
+    'dress',
+    'shoes',
+  ];
+  const syntheticColors = ['black', 'white', 'blue', 'beige', 'green', 'brown', 'grey', 'navy'];
+  const syntheticPatterns = ['solid', 'striped', 'plaid', 'floral'];
+  const syntheticBrands = [
+    'Uniqlo',
+    'Zara',
+    'H&M',
+    'COS',
+    'Aritzia',
+    'Everlane',
+    'Mango',
+    'Nike',
+    'Adidas',
+    'Levi\'s',
+  ];
+  const syntheticCreators = [creator1.id, creator2.id, creator3.id, creator4.id, creator5.id];
+  const syntheticItemTarget = 24;
+
+  let syntheticItemCount = 0;
+  for (let i = 0; i < syntheticItemTarget; i += 1) {
+    const creatorId = syntheticCreators[i % syntheticCreators.length];
+    const category = syntheticCategories[i % syntheticCategories.length];
+    const color = syntheticColors[i % syntheticColors.length];
+    const pattern = syntheticPatterns[i % syntheticPatterns.length];
+    const brand = syntheticBrands[i % syntheticBrands.length];
+    const imageUrl = nextClothingImageUrl(
+      categoryKeywords[category] || ['wardrobe', 'fashion', 'outfit', 'streetstyle'],
+    );
+    const price = 24 + ((i % 40) * 7 + (i % 5) * 3);
+
+    await prisma.post.create({
+      data: {
+        creatorId,
+        caption: `Catalog look ${i + 1}: ${color} ${category} for search testing`,
+        imageUrls: [imageUrl],
+        tags: ['#catalog', '#searchtest', `#${category}`, `#${color}`],
+        engagementScore: Math.max(1, 140 - i * 0.18),
+        clothingItems: {
+          create: [
+            {
+              imageIndex: 0,
+              bbox: { x: 0.18, y: 0.12, width: 0.64, height: 0.76 },
+              category,
+              brand,
+              name: `${brand} ${color} ${category} ${i + 1}`,
+              price,
+              color,
+              pattern,
+              source: 'creator',
+            },
+          ],
+        },
+      },
+    });
+    syntheticItemCount += 1;
+  }
+
+  const totalSeedPosts = 5 + additionalPostSeeds.length + syntheticItemTarget;
+  console.log(`✅ Created ${totalSeedPosts} posts with clothing items`);
+  console.log(`✅ Added ${syntheticItemCount} generated catalog clothing items for tap-to-search testing`);
 
   // Create wardrobe collection for user1
   const collection = await prisma.wardrobeCollection.create({

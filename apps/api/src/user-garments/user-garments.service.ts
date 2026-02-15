@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { deriveFormalityScore, inferSeasonTags } from './garment-metadata.util';
+import { AiService } from '../ai/ai.service';
+import { StorageService } from '../storage/storage.service';
 
 export interface CreateUserGarmentDto {
   mediaUploadId: string;
@@ -62,6 +64,8 @@ export interface UserGarmentResponse {
   removedBgUrl: string | null;
   thumbnailUrl: string | null;
   status: string;
+  aiModelImageUrl: string | null;
+  aiDepthMapUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,7 +78,11 @@ export interface ListUserGarmentsResponse {
 
 @Injectable()
 export class UserGarmentsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private ai: AiService,
+    private storage: StorageService,
+  ) {}
 
   /**
    * Create a user garment from a processed media upload
@@ -308,7 +316,57 @@ export class UserGarmentsService {
     console.log(`[UserGarments] Deleted garment ${garmentId}`);
   }
 
+  async generateAiRender(userId: string, garmentId: string): Promise<UserGarmentResponse> {
+    const garment = await this.prisma.userGarment.findUnique({
+      where: { id: garmentId },
+      include: { mediaUpload: true },
+    });
+
+    if (!garment) {
+      throw new NotFoundException('Garment not found');
+    }
+
+    if (garment.userId !== userId) {
+      throw new BadRequestException('Not authorized to generate AI render for this garment');
+    }
+
+    const sourceImageUrl = garment.removedBgUrl || garment.mediaUpload?.processedUrl || garment.mediaUpload?.originalUrl;
+    if (!sourceImageUrl) {
+      throw new BadRequestException('No source image available for AI render');
+    }
+
+    const generated = await this.ai.generateGarmentModelAndDepth(sourceImageUrl);
+    const keyPrefix = `user/${userId}/garment/${garment.mediaUploadId}`;
+
+    const [cleanModelImageUrl, depthMapUrl] = await Promise.all([
+      this.storage.uploadBufferAtKey(`${keyPrefix}/ai_clean_model.png`, generated.cleanModelImage, 'image/png'),
+      this.storage.uploadBufferAtKey(`${keyPrefix}/ai_depth_map.png`, generated.depthMapImage, 'image/png'),
+    ]);
+
+    const nextAiRender = {
+      provider: 'openai',
+      cleanModelImageUrl,
+      depthMapUrl,
+      sourceImageUrl,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const mergedMetadata = mergeAiRenderMetadata(garment.mediaUpload?.metadata, nextAiRender);
+    const updatedMedia = await this.prisma.mediaUpload.update({
+      where: { id: garment.mediaUploadId },
+      data: { metadata: mergedMetadata },
+    });
+
+    return this.formatGarmentResponse({
+      ...garment,
+      mediaUpload: updatedMedia,
+    });
+  }
+
   private formatGarmentResponse(garment: any): UserGarmentResponse {
+    const metadata = (garment.mediaUpload?.metadata as any) || {};
+    const aiRender = metadata?.aiRender || null;
+
     return {
       id: garment.id,
       userId: garment.userId,
@@ -334,6 +392,8 @@ export class UserGarmentsService {
       removedBgUrl: garment.removedBgUrl || garment.mediaUpload?.processedUrl || null,
       thumbnailUrl: garment.mediaUpload?.thumbnailUrl || null,
       status: garment.mediaUpload?.status || 'unknown',
+      aiModelImageUrl: aiRender?.cleanModelImageUrl || null,
+      aiDepthMapUrl: aiRender?.depthMapUrl || null,
       createdAt: garment.createdAt.toISOString(),
       updatedAt: garment.updatedAt.toISOString(),
     };
@@ -346,4 +406,12 @@ function normalizeColors(values: string[]): string[] {
 
 function uniqueList(values: string[]): string[] {
   return Array.from(new Set((values || []).map((value) => value.trim()).filter(Boolean)));
+}
+
+function mergeAiRenderMetadata(existingMetadata: unknown, aiRender: Record<string, unknown>): Record<string, unknown> {
+  const metadata = (existingMetadata && typeof existingMetadata === 'object' ? existingMetadata : {}) as Record<string, unknown>;
+  return {
+    ...metadata,
+    aiRender,
+  };
 }

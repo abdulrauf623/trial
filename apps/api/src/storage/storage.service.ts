@@ -97,6 +97,17 @@ export class StorageService implements OnModuleInit {
     return this.getPublicUrl(key);
   }
 
+  async uploadBufferAtKey(key: string, buffer: Buffer, contentType: string): Promise<string> {
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+    });
+    await this.s3Client.send(command);
+    return this.getPublicUrl(key);
+  }
+
   /**
    * Download a file from S3
    */

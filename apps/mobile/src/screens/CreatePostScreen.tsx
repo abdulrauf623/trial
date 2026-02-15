@@ -28,6 +28,7 @@ export function CreatePostScreen() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [mediaId, setMediaId] = useState<string | null>(null);
   const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const selectedGarmentItems = garments.filter((garment) => selectedGarments.includes(garment.id));
 
   useEffect(() => {
     loadGarments();
@@ -52,7 +53,7 @@ export function CreatePostScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       allowsEditing: true,
       aspect: [4, 5],
       quality: 0.8,
@@ -132,6 +133,11 @@ export function CreatePostScreen() {
       return;
     }
 
+    if (selectedGarments.length === 0) {
+      Alert.alert('Tag clothes', 'Select at least one worn item so others can save it to their wardrobe.');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -158,7 +164,7 @@ export function CreatePostScreen() {
 
   const renderGarmentItem = ({ item }: { item: UserGarment }) => {
     const isSelected = selectedGarments.includes(item.id);
-    const garmentImageUri = item.thumbnailUrl || item.processedUrl || item.originalUrl;
+    const garmentImageUri = item.removedBgUrl || item.thumbnailUrl || item.processedUrl || item.originalUrl;
 
     return (
       <TouchableOpacity
@@ -253,7 +259,19 @@ export function CreatePostScreen() {
               <Text style={styles.sectionTitle}>
                 Tag Garments {selectedGarments.length > 0 && `(${selectedGarments.length})`}
               </Text>
-              <Text style={styles.sectionSubtitle}>Select items from your wardrobe</Text>
+              <Text style={styles.sectionSubtitle}>Select the clothes worn in this post</Text>
+
+              {selectedGarmentItems.length > 0 && (
+                <View style={styles.selectedGarmentsPreview}>
+                  {selectedGarmentItems.map((item) => (
+                    <View key={item.id} style={styles.selectedGarmentChip}>
+                      <Text style={styles.selectedGarmentChipText}>
+                        {item.subcategory || item.category || 'Tagged item'}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
 
               {garments.length === 0 ? (
                 <View style={styles.emptyGarments}>
@@ -379,6 +397,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginBottom: 12,
+  },
+  selectedGarmentsPreview: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  selectedGarmentChip: {
+    backgroundColor: '#111',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  selectedGarmentChipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
   captionInput: {
     borderWidth: 1,

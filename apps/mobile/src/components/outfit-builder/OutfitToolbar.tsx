@@ -10,9 +10,9 @@ interface OutfitToolbarProps {
   onBack: () => void;
   onSave: () => void;
   saving: boolean;
-  backgroundStyle: OutfitBackgroundStyle;
-  onBackgroundStyleChange: (style: OutfitBackgroundStyle) => void;
-  onOpenTemplates: () => void;
+  backgroundStyle?: OutfitBackgroundStyle;
+  onBackgroundStyleChange?: (style: OutfitBackgroundStyle) => void;
+  onOpenTemplates?: () => void;
 }
 
 const BACKGROUND_ORDER: OutfitBackgroundStyle[] = ['solid', 'gradient', 'paper'];
@@ -47,23 +47,27 @@ export function OutfitToolbar({
         style={styles.input}
       />
 
-      <Pressable
-        onPress={onOpenTemplates}
-        style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
-      >
-        <LineIcon name="grid" size={20} color={theme.colors.icon} />
-      </Pressable>
+      {onOpenTemplates ? (
+        <Pressable
+          onPress={onOpenTemplates}
+          style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
+        >
+          <LineIcon name="grid" size={20} color={theme.colors.icon} />
+        </Pressable>
+      ) : null}
 
-      <Pressable
-        onPress={() => {
-          const index = BACKGROUND_ORDER.indexOf(backgroundStyle);
-          const next = BACKGROUND_ORDER[(index + 1) % BACKGROUND_ORDER.length];
-          onBackgroundStyleChange(next);
-        }}
-        style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
-      >
-        <LineIcon name="tune" size={20} color={theme.colors.icon} />
-      </Pressable>
+      {onBackgroundStyleChange && backgroundStyle ? (
+        <Pressable
+          onPress={() => {
+            const index = BACKGROUND_ORDER.indexOf(backgroundStyle);
+            const next = BACKGROUND_ORDER[(index + 1) % BACKGROUND_ORDER.length];
+            onBackgroundStyleChange(next);
+          }}
+          style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
+        >
+          <LineIcon name="tune" size={20} color={theme.colors.icon} />
+        </Pressable>
+      ) : null}
 
       <Pressable
         onPress={onSave}

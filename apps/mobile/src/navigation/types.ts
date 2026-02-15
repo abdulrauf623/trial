@@ -8,6 +8,7 @@ export type AuthStackParamList = {
 export type MainTabParamList = {
   Explore: undefined;
   Wardrobe: undefined;
+  Calendar: undefined;
   Profile: undefined;
 };
 
@@ -17,7 +18,14 @@ export type RootStackParamList = {
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   PostDetail: { postId: string };
   UserProfile: { userId: string };
-  Search: undefined;
+  Search:
+    | {
+        mode?: 'text' | 'similar';
+        itemId?: string;
+        sourcePostId?: string;
+        initialQuery?: string;
+      }
+    | undefined;
   OutfitBuilder: undefined;
   UploadGarment: undefined;
   MyGarments: undefined;

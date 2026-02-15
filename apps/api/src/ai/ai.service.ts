@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
+export interface GeneratedGarmentImages {
+  cleanModelImage: Buffer;
+  depthMapImage: Buffer;
+}
+
 @Injectable()
 export class AiService {
   private apiKey: string;
@@ -163,5 +168,83 @@ export class AiService {
       .replace(/^\[|\]$/g, '')
       .split(',')
       .map((v) => parseFloat(v.trim()));
+  }
+
+  async generateGarmentModelAndDepth(imageUrl: string): Promise<GeneratedGarmentImages> {
+    if (!this.apiKey) {
+      throw new Error('OPENAI_API_KEY is not configured');
+    }
+
+    const sourceImage = await this.downloadImage(imageUrl);
+
+    const cleanModelImage = await this.generateEditedImage(
+      sourceImage,
+      'Create a clean, premium fashion product model render from this garment image. Keep the exact garment identity, silhouette, fabric details, and color. Use a neutral studio background, soft realistic lighting, minimal shadows, and polished e-commerce styling. No text, no watermark, no extra objects, no person face.'
+    );
+
+    const depthMapImage = await this.generateEditedImage(
+      sourceImage,
+      'Create a grayscale depth map style render of this garment. Near surfaces bright, far surfaces dark, smooth gradients, clear garment contours, plain background, no text, no watermark.'
+    );
+
+    return {
+      cleanModelImage,
+      depthMapImage,
+    };
+  }
+
+  private async downloadImage(imageUrl: string): Promise<Blob> {
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download source image (${response.status})`);
+    }
+    return response.blob();
+  }
+
+  private async generateEditedImage(sourceImage: Blob, prompt: string): Promise<Buffer> {
+    const formData = new FormData();
+    formData.append('model', 'gpt-image-1');
+    formData.append('prompt', prompt);
+    formData.append('size', '1024x1024');
+    formData.append('image', sourceImage, 'garment.png');
+
+    const response = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: formData,
+    });
+
+    const payload: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = payload?.error?.message || payload?.message || `OpenAI image edit failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    const base64 = payload?.data?.[0]?.b64_json;
+    if (!base64 || typeof base64 !== 'string') {
+      throw new Error('OpenAI image response did not include image data');
+    }
+
+    return Buffer.from(base64, 'base64');
+  }
+
+  async isolateGarmentCutout(imageBuffer: Buffer): Promise<Buffer> {
+    if (!this.apiKey) {
+      throw new Error('OPENAI_API_KEY is not configured');
+    }
+
+    const sourceImage = new Blob([imageBuffer], { type: 'image/png' });
+    return this.generateEditedImage(
+      sourceImage,
+      [
+        'Isolate only the clothing garment from this photo.',
+        'If a human is present, remove the person completely and keep only the clothes item.',
+        'Remove the entire background and output a clean transparent PNG cutout.',
+        'Preserve true garment color, silhouette, seams, texture, and fabric details.',
+        'No mannequin body, no skin, no face, no hands, no text, no watermark, no extra objects.',
+      ].join(' ')
+    );
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -11,11 +11,13 @@ import {
   Dimensions,
   ScrollView,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api } from '../services/api';
 import { Post } from '@fashion/shared';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { LineIcon } from '../components/LineIcon';
+import { RootStackParamList } from '../navigation/types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_SIZE = SCREEN_WIDTH / 3 - 1;
@@ -27,17 +29,31 @@ interface SearchFilters {
   maxPrice?: number;
 }
 
+interface SimilarItemResult {
+  id: string;
+  imageIndex?: number | null;
+  post: {
+    id: string;
+    imageUrls: string[];
+  };
+}
+
 export function SearchScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Search'>>();
   const [query, setQuery] = useState('');
   const [searchType, setSearchType] = useState<'posts' | 'items'>('posts');
   const [results, setResults] = useState<Post[]>([]);
+  const [itemResults, setItemResults] = useState<SimilarItemResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [filters] = useState<SearchFilters>({});
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const similarItemId = route.params?.mode === 'similar' ? route.params.itemId : undefined;
+  const isSimilarMode = Boolean(similarItemId);
 
-  const handleSearch = async (isLoadMore = false) => {
+  const handleSearch = useCallback(async (isLoadMore = false) => {
+    if (isSimilarMode) return;
     if (!query.trim() && !isLoadMore) return;
 
     try {
@@ -48,10 +64,19 @@ export function SearchScreen() {
         cursor: isLoadMore ? nextCursor || undefined : undefined,
       });
 
-      if (isLoadMore) {
-        setResults((prev) => [...prev, ...response.posts]);
+      if (searchType === 'posts') {
+        if (isLoadMore) {
+          setResults((prev) => [...prev, ...response.posts]);
+        } else {
+          setResults(response.posts);
+        }
       } else {
-        setResults(response.posts);
+        const items = (response as any).items || [];
+        if (isLoadMore) {
+          setItemResults((prev) => [...prev, ...items]);
+        } else {
+          setItemResults(items);
+        }
       }
       setNextCursor(response.nextCursor);
     } catch (error) {
@@ -59,9 +84,49 @@ export function SearchScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, isSimilarMode, nextCursor, query, searchType]);
+
+  const handleSimilarSearch = useCallback(async () => {
+    if (!similarItemId) return;
+
+    try {
+      setLoading(true);
+      setSearchType('items');
+      const similarItems = await api.searchSimilarItems(similarItemId, 60);
+      setItemResults(similarItems || []);
+      setResults([]);
+      setNextCursor(null);
+    } catch (error) {
+      console.error('Similar search failed:', error);
+      setItemResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [similarItemId]);
+
+  useEffect(() => {
+    if (route.params?.initialQuery) {
+      setQuery(route.params.initialQuery);
+    }
+  }, [route.params?.initialQuery]);
+
+  useEffect(() => {
+    if (isSimilarMode) {
+      handleSimilarSearch();
+    }
+  }, [handleSimilarSearch, isSimilarMode]);
+
+  useEffect(() => {
+    setNextCursor(null);
+    if (searchType === 'posts') {
+      setItemResults([]);
+    } else {
+      setResults([]);
+    }
+  }, [searchType]);
 
   const loadSuggestions = async (text: string) => {
+    if (isSimilarMode) return;
     if (!text.trim()) {
       setSuggestions([]);
       return;
@@ -89,7 +154,7 @@ export function SearchScreen() {
   const renderPost = ({ item }: { item: Post }) => (
     <Pressable
       style={styles.gridItem}
-      onPress={() => (navigation as any).navigate('PostDetail', { postId: item.id })}
+      onPress={() => navigation.navigate('PostDetail', { postId: item.id })}
     >
       <Image source={{ uri: item.imageUrls[0] }} style={styles.gridImage} />
       {item.imageUrls.length > 1 && (
@@ -100,8 +165,34 @@ export function SearchScreen() {
     </Pressable>
   );
 
+  const renderItem = ({ item }: { item: SimilarItemResult }) => {
+    const imageUri = item.post?.imageUrls?.[item.imageIndex || 0] || item.post?.imageUrls?.[0];
+    if (!imageUri) return null;
+
+    return (
+      <Pressable
+        style={styles.gridItem}
+        onPress={() => navigation.navigate('PostDetail', { postId: item.post.id })}
+      >
+        <Image source={{ uri: imageUri }} style={styles.gridImage} />
+      </Pressable>
+    );
+  };
+
+  const gridData = useMemo(
+    () => (searchType === 'items' ? itemResults : results),
+    [itemResults, results, searchType],
+  );
+  const hasResults = gridData.length > 0;
+
   const renderHeader = () => (
     <View style={styles.header}>
+      {isSimilarMode ? (
+        <View style={styles.modeBadge}>
+          <LineIcon name="search" size={14} color="#fff" />
+          <Text style={styles.modeBadgeText}>Tap Search Results</Text>
+        </View>
+      ) : null}
       <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
@@ -110,13 +201,14 @@ export function SearchScreen() {
           onChangeText={handleQueryChange}
           onSubmitEditing={() => handleSearch()}
           returnKeyType="search"
+          editable={!isSimilarMode}
         />
-        <Pressable onPress={() => handleSearch()} style={styles.searchButton}>
+        <Pressable onPress={() => handleSearch()} style={styles.searchButton} disabled={isSimilarMode}>
           <LineIcon name="search" style={styles.searchButtonText} />
         </Pressable>
       </View>
 
-      {suggestions.length > 0 && (
+      {suggestions.length > 0 && !isSimilarMode && (
         <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.suggestions}>
           {suggestions.map((suggestion, index) => (
             <Pressable
@@ -164,38 +256,64 @@ export function SearchScreen() {
 
   return (
     <View style={styles.container}>
-      {loading && results.length === 0 ? (
+      {loading && !hasResults ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#000" />
         </View>
-      ) : results.length === 0 ? (
+      ) : !hasResults ? (
         <View style={styles.emptyContainer}>
           {renderHeader()}
           <View style={styles.emptyContent}>
             <LineIcon name="search" style={styles.emptyIcon} />
             <Text style={styles.emptyText}>
-              {query ? 'No results found' : 'Search for posts, items, or tags'}
+              {isSimilarMode
+                ? 'No similar clothing found for this photo yet.'
+                : query
+                  ? 'No results found'
+                  : 'Search for posts, items, or tags'}
             </Text>
           </View>
         </View>
       ) : (
-        <FlatList
-          data={results}
-          renderItem={renderPost}
-          keyExtractor={(item) => item.id}
-          ListHeaderComponent={renderHeader}
-          numColumns={3}
-          columnWrapperStyle={styles.gridRow}
-          onEndReached={() => handleSearch(true)}
-          onEndReachedThreshold={0.5}
-          ListFooterComponent={
-            loading ? (
-              <View style={styles.footer}>
-                <ActivityIndicator size="small" color="#000" />
-              </View>
-            ) : null
-          }
-        />
+        <>
+          {searchType === 'items' ? (
+            <FlatList
+              data={itemResults}
+              renderItem={renderItem}
+              keyExtractor={(item) => item.id}
+              ListHeaderComponent={renderHeader}
+              numColumns={3}
+              columnWrapperStyle={styles.gridRow}
+              onEndReached={() => handleSearch(true)}
+              onEndReachedThreshold={0.5}
+              ListFooterComponent={
+                loading ? (
+                  <View style={styles.footer}>
+                    <ActivityIndicator size="small" color="#000" />
+                  </View>
+                ) : null
+              }
+            />
+          ) : (
+            <FlatList
+              data={results}
+              renderItem={renderPost}
+              keyExtractor={(item) => item.id}
+              ListHeaderComponent={renderHeader}
+              numColumns={3}
+              columnWrapperStyle={styles.gridRow}
+              onEndReached={() => handleSearch(true)}
+              onEndReachedThreshold={0.5}
+              ListFooterComponent={
+                loading ? (
+                  <View style={styles.footer}>
+                    <ActivityIndicator size="small" color="#000" />
+                  </View>
+                ) : null
+              }
+            />
+          )}
+        </>
       )}
     </View>
   );
@@ -234,6 +352,22 @@ const styles = StyleSheet.create({
     paddingTop: 60,
     paddingBottom: 16,
     backgroundColor: '#fff',
+  },
+  modeBadge: {
+    backgroundColor: '#111',
+    borderRadius: 999,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  modeBadgeText: {
+    fontSize: 12,
+    color: '#fff',
+    fontWeight: '600',
   },
   searchContainer: {
     flexDirection: 'row',

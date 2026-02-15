@@ -1,7 +1,7 @@
 import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { RegisterSchema, LoginSchema } from '@fashion/shared';
+import { RegisterSchema, LoginSchema, RefreshTokenSchema } from '@fashion/shared';
 
 interface AuthRequest extends Request {
   user: {
@@ -33,9 +33,9 @@ export class AuthController {
     return this.authService.getUserById(req.user.userId);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post('refresh')
-  async refresh(@Request() req: AuthRequest) {
-    return this.authService.refreshToken(req.user.userId);
+  async refresh(@Body() body: unknown) {
+    const data = RefreshTokenSchema.parse(body);
+    return this.authService.refreshTokenFromBody(data.refreshToken);
   }
 }

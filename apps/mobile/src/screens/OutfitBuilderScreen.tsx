@@ -1,10 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -17,12 +12,10 @@ import { RootStackParamList } from '../navigation/types';
 import { api } from '../services/api';
 import { clearOutfitDraft, getOutfitDraft, setOutfitDraft } from '../services/storage';
 import { useAppTheme } from '../theme';
-import { OutfitCanvas } from '../components/outfit-builder/OutfitCanvas';
 import { OutfitToolbar } from '../components/outfit-builder/OutfitToolbar';
-import { TemplatePicker, OutfitTemplateId } from '../components/outfit-builder/TemplatePicker';
-import { TransformControls } from '../components/outfit-builder/TransformControls';
-import { BuilderCanvasItem } from '../components/outfit-builder/types';
 import { WardrobeTray } from '../components/outfit-builder/WardrobeTray';
+import { OutfitCanvas } from '../components/outfit-builder/OutfitCanvas';
+import { BuilderCanvasItem } from '../components/outfit-builder/types';
 
 type RootNav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -31,21 +24,12 @@ interface OutfitDraftPayload {
   outfitId: string | null;
   name: string;
   backgroundStyle: OutfitBackgroundStyle;
-  items: Array<{
-    id: string;
-    wardrobeItemId: string;
-    x: number;
-    y: number;
-    scale: number;
-    rotation: number;
-    zIndex: number;
-    mirror: boolean;
-    labelText?: string | null;
-    labelVisible: boolean;
-  }>;
+  selectedWardrobeItemIds: string[];
+  sourceFilter: BuilderWardrobeItemSource | 'all';
+  selectedCategory: string;
 }
 
-const DRAFT_VERSION = 1;
+const DRAFT_VERSION = 2;
 
 export function OutfitBuilderScreen() {
   const navigation = useNavigation<RootNav>();
@@ -58,13 +42,23 @@ export function OutfitBuilderScreen() {
   const [wardrobeItems, setWardrobeItems] = useState<BuilderWardrobeItem[]>([]);
   const [sourceFilter, setSourceFilter] = useState<BuilderWardrobeItemSource | 'all'>('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [canvasItems, setCanvasItems] = useState<BuilderCanvasItem[]>([]);
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedWardrobeItemIds, setSelectedWardrobeItemIds] = useState<string[]>([]);
   const [outfitId, setOutfitId] = useState<string | null>(null);
   const [outfitName, setOutfitName] = useState('');
   const [backgroundStyle, setBackgroundStyle] = useState<OutfitBackgroundStyle>('solid');
-  const [showTemplates, setShowTemplates] = useState(false);
   const [hydratedDraft, setHydratedDraft] = useState(false);
+  const [canvasItems, setCanvasItems] = useState<BuilderCanvasItem[]>([]);
+  const [selectedCanvasItemId, setSelectedCanvasItemId] = useState<string | null>(null);
+
+  const wardrobeById = useMemo(() => {
+    const index = new Map<string, BuilderWardrobeItem>();
+    wardrobeItems.forEach((item) => {
+      index.set(item.id, item);
+    });
+    return index;
+  }, [wardrobeItems]);
+
+  const selectedIds = useMemo(() => new Set(selectedWardrobeItemIds), [selectedWardrobeItemIds]);
 
   const loadWardrobe = useCallback(async () => {
     if (!user?.id) return;
@@ -85,6 +79,52 @@ export function OutfitBuilderScreen() {
   }, [loadWardrobe]);
 
   useEffect(() => {
+    setSelectedWardrobeItemIds((previous) => previous.filter((id) => wardrobeById.has(id)));
+  }, [wardrobeById]);
+
+  useEffect(() => {
+    setCanvasItems((previous) => {
+      const previousById = new Map(previous.map((item) => [item.wardrobeItemId, item]));
+      return selectedWardrobeItemIds
+        .map((wardrobeItemId, index) => {
+          const wardrobeItem = wardrobeById.get(wardrobeItemId);
+          if (!wardrobeItem) return null;
+
+          const existing = previousById.get(wardrobeItemId);
+          if (existing) {
+            return {
+              ...existing,
+              wardrobeItem,
+            };
+          }
+
+          const fallback = fallbackLayoutForIndex(index, Math.max(1, selectedWardrobeItemIds.length));
+          return {
+            id: wardrobeItemId,
+            wardrobeItemId,
+            wardrobeItem,
+            x: fallback.x,
+            y: fallback.y,
+            scale: fallback.scale,
+            rotation: fallback.rotation,
+            zIndex: index,
+            mirror: false,
+            labelVisible: false,
+            labelText: null,
+          } satisfies BuilderCanvasItem;
+        })
+        .filter((item): item is BuilderCanvasItem => Boolean(item));
+    });
+
+    setSelectedCanvasItemId((previous) => {
+      if (previous && selectedWardrobeItemIds.includes(previous)) {
+        return previous;
+      }
+      return selectedWardrobeItemIds[0] || null;
+    });
+  }, [selectedWardrobeItemIds, wardrobeById]);
+
+  useEffect(() => {
     let cancelled = false;
     async function hydrateDraft() {
       if (!user?.id || hydratedDraft || wardrobeItems.length === 0) return;
@@ -101,26 +141,13 @@ export function OutfitBuilderScreen() {
           return;
         }
 
-        const wardrobeById = new Map<string, BuilderWardrobeItem>();
-        for (const item of wardrobeItems) {
-          wardrobeById.set(item.id, item);
-        }
-
-        const restoredItems = parsed.items
-          .map((item) => {
-            const wardrobeItem = wardrobeById.get(item.wardrobeItemId);
-            if (!wardrobeItem) return null;
-            return {
-              ...item,
-              wardrobeItem,
-            } satisfies BuilderCanvasItem;
-          })
-          .filter((item: BuilderCanvasItem | null): item is BuilderCanvasItem => Boolean(item));
-
-        setCanvasItems(restoredItems);
+        const validIds = parsed.selectedWardrobeItemIds.filter((id) => wardrobeById.has(id));
+        setSelectedWardrobeItemIds(validIds);
         setOutfitName(parsed.name || '');
         setBackgroundStyle(parsed.backgroundStyle || 'solid');
         setOutfitId(parsed.outfitId || null);
+        setSourceFilter(parsed.sourceFilter || 'all');
+        setSelectedCategory(parsed.selectedCategory || 'all');
       } catch (error) {
         console.error('Failed to hydrate outfit builder draft:', error);
       } finally {
@@ -135,7 +162,7 @@ export function OutfitBuilderScreen() {
     return () => {
       cancelled = true;
     };
-  }, [hydratedDraft, user?.id, wardrobeItems]);
+  }, [hydratedDraft, user?.id, wardrobeById, wardrobeItems.length]);
 
   useEffect(() => {
     if (!user?.id || !hydratedDraft) return;
@@ -144,18 +171,9 @@ export function OutfitBuilderScreen() {
       outfitId,
       name: outfitName,
       backgroundStyle,
-      items: canvasItems.map((item) => ({
-        id: item.id,
-        wardrobeItemId: item.wardrobeItemId,
-        x: item.x,
-        y: item.y,
-        scale: item.scale,
-        rotation: item.rotation,
-        zIndex: item.zIndex,
-        mirror: item.mirror,
-        labelText: item.labelText || null,
-        labelVisible: item.labelVisible,
-      })),
+      selectedWardrobeItemIds,
+      sourceFilter,
+      selectedCategory,
     };
 
     const timeout = setTimeout(() => {
@@ -165,125 +183,72 @@ export function OutfitBuilderScreen() {
     }, 220);
 
     return () => clearTimeout(timeout);
-  }, [backgroundStyle, canvasItems, hydratedDraft, outfitId, outfitName, user?.id]);
-
-  const selectedItem = useMemo(
-    () => canvasItems.find((item) => item.id === selectedItemId) || null,
-    [canvasItems, selectedItemId],
-  );
-
-  const selectedIds = useMemo(() => {
-    const result = new Set<string>();
-    for (const item of canvasItems) {
-      result.add(item.wardrobeItemId);
-    }
-    return result;
-  }, [canvasItems]);
+  }, [
+    backgroundStyle,
+    hydratedDraft,
+    outfitId,
+    outfitName,
+    selectedCategory,
+    selectedWardrobeItemIds,
+    sourceFilter,
+    user?.id,
+  ]);
 
   const handleAddItem = useCallback((item: BuilderWardrobeItem) => {
-    setCanvasItems((previous) => {
-      const existing = previous.find((entry) => entry.wardrobeItemId === item.id);
-      if (existing) {
-        setSelectedItemId(existing.id);
-        return previous;
+    setSelectedCanvasItemId(item.id);
+    setSelectedWardrobeItemIds((previous) => {
+      if (previous.includes(item.id)) {
+        return previous.filter((id) => id !== item.id);
       }
-
-      const maxZ = previous.reduce((max, entry) => Math.max(max, entry.zIndex), -1);
-      const next: BuilderCanvasItem = {
-        id: `${item.id}:${Date.now()}`,
-        wardrobeItemId: item.id,
-        wardrobeItem: item,
-        x: 0.5 + ((previous.length % 3) - 1) * 0.08,
-        y: 0.5 + (Math.floor(previous.length / 3) % 3 - 1) * 0.06,
-        scale: 1,
-        rotation: 0,
-        zIndex: maxZ + 1,
-        mirror: false,
-        labelText: item.brand || item.category,
-        labelVisible: false,
-      };
-
-      setSelectedItemId(next.id);
-      return [...previous, next];
+      return [...previous, item.id];
     });
   }, []);
 
-  const handleChangeItem = useCallback((id: string, patch: Partial<BuilderCanvasItem>) => {
-    setCanvasItems((previous) =>
-      previous.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
-  }, []);
-
-  const handleBringForward = useCallback(() => {
-    if (!selectedItemId) return;
-    setCanvasItems((previous) => {
-      const selected = previous.find((item) => item.id === selectedItemId);
-      if (!selected) return previous;
-      const highest = previous.reduce((max, item) => Math.max(max, item.zIndex), selected.zIndex);
-      return previous.map((item) =>
-        item.id === selectedItemId ? { ...item, zIndex: highest + 1 } : item,
-      );
-    });
-  }, [selectedItemId]);
-
-  const handleSendBackward = useCallback(() => {
-    if (!selectedItemId) return;
-    setCanvasItems((previous) => {
-      const selected = previous.find((item) => item.id === selectedItemId);
-      if (!selected) return previous;
-      const lowest = previous.reduce((min, item) => Math.min(min, item.zIndex), selected.zIndex);
-      return previous.map((item) =>
-        item.id === selectedItemId ? { ...item, zIndex: lowest - 1 } : item,
-      );
-    });
-  }, [selectedItemId]);
-
-  const handleMirror = useCallback(() => {
-    if (!selectedItemId) return;
+  const handleChangeCanvasItem = useCallback((id: string, patch: Partial<BuilderCanvasItem>) => {
     setCanvasItems((previous) =>
       previous.map((item) =>
-        item.id === selectedItemId ? { ...item, mirror: !item.mirror } : item,
+        item.id === id
+          ? {
+              ...item,
+              ...patch,
+            }
+          : item,
       ),
     );
-  }, [selectedItemId]);
-
-  const handleToggleLabel = useCallback(() => {
-    if (!selectedItemId) return;
-    setCanvasItems((previous) =>
-      previous.map((item) => {
-        if (item.id !== selectedItemId) return item;
-        return {
-          ...item,
-          labelVisible: !item.labelVisible,
-          labelText: item.labelText || item.wardrobeItem.brand || item.wardrobeItem.category,
-        };
-      }),
-    );
-  }, [selectedItemId]);
-
-  const handleDeleteSelected = useCallback(() => {
-    if (!selectedItemId) return;
-    setCanvasItems((previous) => previous.filter((item) => item.id !== selectedItemId));
-    setSelectedItemId(null);
-  }, [selectedItemId]);
-
-  const applyTemplate = useCallback((template: OutfitTemplateId) => {
-    setCanvasItems((previous) => {
-      if (previous.length === 0) return previous;
-      const positions = templatePositions(template, previous.length);
-      return previous.map((item, index) => {
-        const position = positions[index] || positions[positions.length - 1];
-        return {
-          ...item,
-          x: position.x,
-          y: position.y,
-          scale: position.scale,
-          rotation: position.rotation,
-          zIndex: index,
-        };
-      });
-    });
   }, []);
+
+  const selectedCanvasItem = useMemo(
+    () => canvasItems.find((item) => item.id === selectedCanvasItemId) || null,
+    [canvasItems, selectedCanvasItemId],
+  );
+
+  const adjustSelectedScale = useCallback((delta: number) => {
+    if (!selectedCanvasItemId) return;
+    setCanvasItems((previous) =>
+      previous.map((item) =>
+        item.id === selectedCanvasItemId
+          ? {
+              ...item,
+              scale: clamp(item.scale + delta, 0.2, 3),
+            }
+          : item,
+      ),
+    );
+  }, [selectedCanvasItemId]);
+
+  const resetSelectedScale = useCallback(() => {
+    if (!selectedCanvasItemId) return;
+    setCanvasItems((previous) =>
+      previous.map((item) =>
+        item.id === selectedCanvasItemId
+          ? {
+              ...item,
+              scale: 1,
+            }
+          : item,
+      ),
+    );
+  }, [selectedCanvasItemId]);
 
   const handleSave = useCallback(async () => {
     if (saving) return;
@@ -294,20 +259,23 @@ export function OutfitBuilderScreen() {
 
     try {
       setSaving(true);
+      const orderedItems = [...canvasItems].sort((a, b) => a.zIndex - b.zIndex);
       const payload = {
         name: outfitName.trim() ? outfitName.trim() : undefined,
         backgroundStyle,
-        items: canvasItems.map((item) => ({
-          wardrobeItemId: item.wardrobeItemId,
-          x: item.x,
-          y: item.y,
-          scale: item.scale,
-          rotation: item.rotation,
-          zIndex: item.zIndex,
-          mirror: item.mirror,
-          labelText: item.labelText || undefined,
-          labelVisible: item.labelVisible,
-        })),
+        items: orderedItems.map((item, index) => {
+          return {
+            wardrobeItemId: item.wardrobeItemId,
+            x: clamp(item.x, 0, 1),
+            y: clamp(item.y, 0, 1),
+            scale: clamp(item.scale, 0.2, 3),
+            rotation: clamp(item.rotation, -360, 360),
+            zIndex: Number.isFinite(item.zIndex) ? item.zIndex : index,
+            mirror: Boolean(item.mirror),
+            labelVisible: Boolean(item.labelVisible),
+            labelText: item.labelText ?? null,
+          };
+        }),
       };
 
       const saved = outfitId
@@ -329,7 +297,15 @@ export function OutfitBuilderScreen() {
     } finally {
       setSaving(false);
     }
-  }, [backgroundStyle, canvasItems, navigation, outfitId, outfitName, saving, user?.id]);
+  }, [
+    backgroundStyle,
+    canvasItems,
+    navigation,
+    outfitId,
+    outfitName,
+    saving,
+    user?.id,
+  ]);
 
   const handleBack = useCallback(() => {
     navigation.goBack();
@@ -352,28 +328,40 @@ export function OutfitBuilderScreen() {
         onSave={handleSave}
         saving={saving}
         backgroundStyle={backgroundStyle}
-        onBackgroundStyleChange={setBackgroundStyle}
-        onOpenTemplates={() => setShowTemplates(true)}
       />
 
-      <OutfitCanvas
-        items={canvasItems}
-        selectedItemId={selectedItemId}
-        onSelectItem={setSelectedItemId}
-        onChangeItem={handleChangeItem}
-        backgroundStyle={backgroundStyle}
-      />
-
-      <View style={styles.controlsWrap}>
-        <TransformControls
-          visible={Boolean(selectedItem)}
-          onBringForward={handleBringForward}
-          onSendBackward={handleSendBackward}
-          onMirror={handleMirror}
-          onToggleLabel={handleToggleLabel}
-          onDelete={handleDeleteSelected}
+      <View style={styles.canvasWrap}>
+        <OutfitCanvas
+          items={canvasItems}
+          selectedItemId={selectedCanvasItemId}
+          onSelectItem={setSelectedCanvasItemId}
+          onChangeItem={handleChangeCanvasItem}
+          backgroundStyle={backgroundStyle}
         />
       </View>
+
+      {selectedCanvasItem ? (
+        <View style={styles.resizeControls}>
+          <Pressable
+            onPress={() => adjustSelectedScale(-0.08)}
+            style={({ pressed }) => [styles.resizeButton, pressed && styles.resizeButtonPressed]}
+          >
+            <Text style={styles.resizeButtonText}>-</Text>
+          </Pressable>
+          <Pressable
+            onPress={resetSelectedScale}
+            style={({ pressed }) => [styles.resizeBadge, pressed && styles.resizeButtonPressed]}
+          >
+            <Text style={styles.resizeLabel}>Size {Math.round(selectedCanvasItem.scale * 100)}%</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => adjustSelectedScale(0.08)}
+            style={({ pressed }) => [styles.resizeButton, pressed && styles.resizeButtonPressed]}
+          >
+            <Text style={styles.resizeButtonText}>+</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <WardrobeTray
         items={wardrobeItems}
@@ -385,65 +373,23 @@ export function OutfitBuilderScreen() {
         onAddItem={handleAddItem}
         selectedIds={selectedIds}
       />
-
-      <TemplatePicker
-        visible={showTemplates}
-        onClose={() => setShowTemplates(false)}
-        onSelect={applyTemplate}
-      />
     </View>
   );
 }
 
-function templatePositions(
-  template: OutfitTemplateId,
-  count: number,
-): Array<{ x: number; y: number; scale: number; rotation: number }> {
-  if (template === 'center') {
-    const base = [
-      { x: 0.5, y: 0.48, scale: 1.1, rotation: 0 },
-      { x: 0.31, y: 0.62, scale: 0.92, rotation: -6 },
-      { x: 0.69, y: 0.62, scale: 0.92, rotation: 6 },
-      { x: 0.5, y: 0.78, scale: 0.82, rotation: 0 },
-    ];
-    return fillTemplate(base, count);
-  }
-
-  if (template === 'grid_2x2') {
-    const base = [
-      { x: 0.32, y: 0.34, scale: 0.94, rotation: -2 },
-      { x: 0.68, y: 0.34, scale: 0.94, rotation: 2 },
-      { x: 0.32, y: 0.68, scale: 0.94, rotation: 1 },
-      { x: 0.68, y: 0.68, scale: 0.94, rotation: -1 },
-    ];
-    return fillTemplate(base, count);
-  }
-
-  const editorial = [
-    { x: 0.42, y: 0.32, scale: 1.04, rotation: -7 },
-    { x: 0.65, y: 0.5, scale: 0.95, rotation: 5 },
-    { x: 0.38, y: 0.62, scale: 0.9, rotation: -4 },
-    { x: 0.6, y: 0.76, scale: 0.84, rotation: 8 },
-  ];
-  return fillTemplate(editorial, count);
-}
-
-function fillTemplate(
-  base: Array<{ x: number; y: number; scale: number; rotation: number }>,
-  count: number,
-): Array<{ x: number; y: number; scale: number; rotation: number }> {
-  const result: Array<{ x: number; y: number; scale: number; rotation: number }> = [];
-  for (let i = 0; i < count; i += 1) {
-    const source = base[i % base.length];
-    const wrap = Math.floor(i / base.length);
-    result.push({
-      x: clamp(source.x + (wrap % 2 === 0 ? 0.02 * wrap : -0.02 * wrap), 0.12, 0.88),
-      y: clamp(source.y + 0.04 * wrap, 0.14, 0.9),
-      scale: clamp(source.scale - 0.05 * wrap, 0.66, 1.18),
-      rotation: source.rotation,
-    });
-  }
-  return result;
+function fallbackLayoutForIndex(
+  index: number,
+  total: number,
+): { x: number; y: number; scale: number; rotation: number } {
+  const columns = Math.min(3, Math.max(1, total));
+  const col = index % columns;
+  const row = Math.floor(index / columns);
+  return {
+    x: clamp(0.33 + col * 0.17, 0.14, 0.86),
+    y: clamp(0.3 + row * 0.2, 0.14, 0.9),
+    scale: 1,
+    rotation: 0,
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -462,12 +408,54 @@ function createStyles(theme: ReturnType<typeof useAppTheme>['theme']) {
       justifyContent: 'center',
       backgroundColor: theme.colors.background,
     },
-    controlsWrap: {
-      paddingHorizontal: 16,
-      paddingBottom: 8,
+    canvasWrap: {
+      flex: 1,
+      padding: 12,
+    },
+    resizeControls: {
+      marginTop: -2,
+      marginBottom: 8,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
       alignItems: 'center',
-      minHeight: 54,
       justifyContent: 'center',
+      gap: 10,
+    },
+    resizeButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    resizeBadge: {
+      minWidth: 126,
+      height: 40,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+    },
+    resizeLabel: {
+      color: theme.colors.textPrimary,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    resizeButtonText: {
+      color: theme.colors.textPrimary,
+      fontSize: 22,
+      fontWeight: '700',
+      lineHeight: 24,
+    },
+    resizeButtonPressed: {
+      opacity: 0.78,
+      transform: [{ scale: 0.98 }],
     },
   });
 }

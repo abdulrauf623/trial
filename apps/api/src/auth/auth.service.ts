@@ -2,7 +2,17 @@ import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/co
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
-import { RegisterInput, LoginInput, AuthResponse } from '@fashion/shared';
+import { RegisterInput, LoginInput, AuthResponse, MeResponse } from '@fashion/shared';
+
+const USER_SAFE_SELECT = {
+  id: true,
+  email: true,
+  displayName: true,
+  accountType: true,
+  avatarUrl: true,
+  isPremium: true,
+  createdAt: true,
+} as const;
 
 @Injectable()
 export class AuthService {
@@ -30,6 +40,7 @@ export class AuthService {
         accountType: data.accountType,
         stylePreferences: data.stylePreferences || [],
       },
+      select: USER_SAFE_SELECT,
     });
 
     const tokens = await this.generateTokens(user.id);
@@ -37,12 +48,7 @@ export class AuthService {
     return {
       ...tokens,
       user: {
-        id: user.id,
-        email: user.email,
-        displayName: user.displayName,
-        accountType: user.accountType,
-        avatarUrl: user.avatarUrl,
-        isPremium: user.isPremium,
+        ...user,
         createdAt: user.createdAt.toISOString(),
       },
     };
@@ -51,6 +57,7 @@ export class AuthService {
   async login(data: LoginInput): Promise<AuthResponse> {
     const user = await this.prisma.user.findUnique({
       where: { email: data.email },
+      select: { ...USER_SAFE_SELECT, passwordHash: true },
     });
 
     if (!user || !user.passwordHash) {
@@ -79,14 +86,36 @@ export class AuthService {
     };
   }
 
-  async getUserById(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+  async getUserById(userId: string): Promise<MeResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_SAFE_SELECT,
+    });
     if (!user) throw new UnauthorizedException('User not found');
-    return user;
+    return {
+      ...user,
+      createdAt: user.createdAt.toISOString(),
+    };
   }
 
-  async refreshToken(userId: string) {
-    return this.generateTokens(userId);
+  async refreshTokenFromBody(refreshTokenValue: string) {
+    try {
+      const payload = this.jwtService.verify(refreshTokenValue);
+      if (!payload.userId) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.userId },
+        select: { id: true },
+      });
+      if (!user) {
+        throw new UnauthorizedException('User no longer exists');
+      }
+      return this.generateTokens(user.id);
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error;
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
   }
 
   private async generateTokens(userId: string) {

@@ -30,17 +30,31 @@ import {
   ListCreatedOutfitsResponse,
   RenderOutfitResponse,
   UpdateOutfitInput,
+  MeResponse,
+  GenerateGarmentAiRenderResponse,
 } from '@fashion/shared';
-import { getToken, setToken, clearToken } from './storage';
+import { getToken, setToken, clearToken, getRefreshToken, setRefreshToken, clearRefreshToken } from './storage';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+const REQUEST_TIMEOUT_MS = 10_000;
+
+export interface WardrobeWorthResponse {
+  totalValue: number;
+  pricedItems: number;
+  totalItems: number;
+  currency: 'USD';
+}
 
 class ApiClient {
+  private isRefreshing = false;
+  private refreshPromise: Promise<string | null> | null = null;
+
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    { skipAuth = false, isRetry = false }: { skipAuth?: boolean; isRetry?: boolean } = {}
   ): Promise<T> {
-    const token = await getToken();
+    const token = skipAuth ? null : await getToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...((options.headers as Record<string, string>) || {}),
@@ -50,26 +64,102 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || `HTTP ${response.status}`);
+    try {
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+
+      if (response.status === 401 && !isRetry && !skipAuth) {
+        const newToken = await this.tryRefreshToken();
+        if (newToken) {
+          return this.request<T>(endpoint, options, { isRetry: true });
+        }
+        await this.clearAuthState();
+        throw new Error('Session expired. Please log in again.');
+      }
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Request failed' }));
+        throw new Error(error.message || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        throw new Error('Request timed out. Please check your connection and try again.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  private async tryRefreshToken(): Promise<string | null> {
+    if (this.isRefreshing && this.refreshPromise) {
+      return this.refreshPromise;
     }
 
-    return response.json();
+    this.isRefreshing = true;
+    this.refreshPromise = this.doRefreshToken();
+
+    try {
+      return await this.refreshPromise;
+    } finally {
+      this.isRefreshing = false;
+      this.refreshPromise = null;
+    }
+  }
+
+  private async doRefreshToken(): Promise<string | null> {
+    try {
+      const refreshTokenValue = await getRefreshToken();
+      if (!refreshTokenValue) return null;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const response = await fetch(`${API_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: refreshTokenValue }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) return null;
+
+        const data = await response.json();
+        await setToken(data.accessToken);
+        if (data.refreshToken) {
+          await setRefreshToken(data.refreshToken);
+        }
+        return data.accessToken;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  private async clearAuthState(): Promise<void> {
+    await clearToken();
+    await clearRefreshToken();
   }
 
   async login(data: LoginInput): Promise<AuthResponse> {
     const response = await this.request<AuthResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(data),
-    });
+    }, { skipAuth: true });
 
     await setToken(response.accessToken);
+    await setRefreshToken(response.refreshToken);
     return response;
   }
 
@@ -77,18 +167,19 @@ class ApiClient {
     const response = await this.request<AuthResponse>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(data),
-    });
+    }, { skipAuth: true });
 
     await setToken(response.accessToken);
+    await setRefreshToken(response.refreshToken);
     return response;
   }
 
-  async getMe() {
-    return this.request('/auth/me');
+  async getMe(): Promise<MeResponse> {
+    return this.request<MeResponse>('/auth/me');
   }
 
   async logout() {
-    await clearToken();
+    await this.clearAuthState();
   }
 
   async getFeed(limit: number = 20, cursor?: string): Promise<FeedResponse> {
@@ -131,6 +222,12 @@ class ApiClient {
     });
   }
 
+  async saveTaggedGarment(postId: string, garmentId: string): Promise<{ success: boolean }> {
+    return this.request(`/posts/${postId}/tagged-garments/${garmentId}/save`, {
+      method: 'POST',
+    });
+  }
+
   async unsavePost(postId: string): Promise<{ success: boolean }> {
     return this.request(`/posts/${postId}/save`, {
       method: 'DELETE',
@@ -155,6 +252,10 @@ class ApiClient {
 
     const queryString = params.toString();
     return this.request<WardrobeResponse>(`/wardrobe${queryString ? `?${queryString}` : ''}`);
+  }
+
+  async getWardrobeWorth(): Promise<WardrobeWorthResponse> {
+    return this.request<WardrobeWorthResponse>('/wardrobe/worth');
   }
 
   async addToWardrobe(clothingItemId: string): Promise<{ success: boolean }> {
@@ -265,16 +366,24 @@ class ApiClient {
   }
 
   async uploadToS3(uploadUrl: string, file: Blob, contentType: string): Promise<void> {
-    const response = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': contentType,
-      },
-      body: file,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60_000);
 
-    if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status}`);
+    try {
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': contentType,
+        },
+        body: file,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -338,12 +447,24 @@ class ApiClient {
     });
   }
 
+  async generateGarmentAiRender(garmentId: string): Promise<GenerateGarmentAiRenderResponse> {
+    return this.request<GenerateGarmentAiRenderResponse>(`/user-garments/${garmentId}/ai-render`, {
+      method: 'POST',
+    });
+  }
+
   // ===== OUTFIT RECOMMENDATIONS =====
 
   async generateOutfits(data: GenerateOutfitsInput): Promise<GenerateOutfitsResponse> {
     return this.request<GenerateOutfitsResponse>('/outfits/generate', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async generateRandomOutfit(): Promise<RenderOutfitResponse> {
+    return this.request<RenderOutfitResponse>('/outfits/random', {
+      method: 'POST',
     });
   }
 

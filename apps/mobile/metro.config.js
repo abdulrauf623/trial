@@ -15,6 +15,11 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
+// pnpm installs dependencies as symlinks inside .pnpm store.
+// Explicitly enabling symlink resolution avoids intermittent "Unable to resolve"
+// errors for workspace-linked and external packages.
+config.resolver.unstable_enableSymlinks = true;
+
 // Map workspace packages to their source directories
 config.resolver.extraNodeModules = {
   '@fashion/shared': path.resolve(workspaceRoot, 'packages/shared'),

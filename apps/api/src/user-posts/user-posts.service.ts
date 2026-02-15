@@ -68,7 +68,22 @@ export class UserPostsService {
         select: {
           id: true,
           category: true,
+          subcategory: true,
+          brand: true,
+          colors: true,
+          pattern: true,
+          patternType: true,
+          confidence: true,
+          removedBgUrl: true,
+          mediaUploadId: true,
           tags: true,
+          mediaUpload: {
+            select: {
+              thumbnailUrl: true,
+              processedUrl: true,
+              originalUrl: true,
+            },
+          },
         },
       });
 
@@ -129,6 +144,35 @@ export class UserPostsService {
           imageUrls: [resolvedImageUrl],
           tags: legacyTags,
           engagementScore: 0,
+          clothingItems:
+            taggedGarments.length > 0
+              ? {
+                  create: taggedGarments.map((garment: any) => ({
+                    imageIndex: 0,
+                    bbox: {
+                      x: 0,
+                      y: 0,
+                      width: 1,
+                      height: 1,
+                      sourceGarmentId: garment.id,
+                      sourceMediaUploadId: garment.mediaUploadId,
+                      cutoutUrl:
+                        garment.removedBgUrl ||
+                        garment.mediaUpload?.processedUrl ||
+                        garment.mediaUpload?.originalUrl ||
+                        null,
+                      thumbnailUrl: garment.mediaUpload?.thumbnailUrl || null,
+                    },
+                    category: garment.category || garment.subcategory || null,
+                    brand: garment.brand || null,
+                    name: this.buildLegacyItemName(garment),
+                    color: Array.isArray(garment.colors) && garment.colors.length > 0 ? garment.colors[0] : null,
+                    pattern: garment.patternType || garment.pattern || null,
+                    source: 'creator',
+                    confidence: garment.confidence || null,
+                  })),
+                }
+              : undefined,
         },
       });
     } catch (error) {
@@ -286,6 +330,17 @@ export class UserPostsService {
     }
 
     return Array.from(normalized).slice(0, 10);
+  }
+
+  private buildLegacyItemName(garment: {
+    category?: string | null;
+    subcategory?: string | null;
+    brand?: string | null;
+  }): string | null {
+    if (garment.brand && garment.subcategory) {
+      return `${garment.brand} ${garment.subcategory}`;
+    }
+    return garment.brand || garment.subcategory || garment.category || null;
   }
 
   private formatPostResponse(post: any): UserPostResponse {

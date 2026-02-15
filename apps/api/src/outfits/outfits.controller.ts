@@ -51,6 +51,11 @@ export class OutfitsController {
     return this.outfitsService.generate(req.user.userId, input);
   }
 
+  @Post('random')
+  async createRandom(@Request() req: AuthRequest) {
+    return this.outfitsService.createRandomOutfit(req.user.userId);
+  }
+
   @Get('wardrobe')
   async getBuilderWardrobe(
     @Request() req: AuthRequest,

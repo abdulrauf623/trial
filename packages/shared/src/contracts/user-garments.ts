@@ -45,6 +45,8 @@ export const UserGarmentSchema = z.object({
   removedBgUrl: z.string().url().nullable(),
   thumbnailUrl: z.string().url().nullable(),
   status: MediaStatusSchema,
+  aiModelImageUrl: z.string().url().nullable().optional(),
+  aiDepthMapUrl: z.string().url().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -74,3 +76,8 @@ export const UpdateUserGarmentSchema = z.object({
   tags: z.array(z.string()).optional(),
 });
 export type UpdateUserGarment = z.infer<typeof UpdateUserGarmentSchema>;
+
+export const GenerateGarmentAiRenderResponseSchema = z.object({
+  garment: UserGarmentSchema,
+});
+export type GenerateGarmentAiRenderResponse = z.infer<typeof GenerateGarmentAiRenderResponseSchema>;

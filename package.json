@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "pnpm --filter @fashion/api dev",
     "mobile": "pnpm --filter @fashion/mobile start",
+    "mobile:fresh": "pnpm --filter @fashion/mobile start:fresh",
     "api": "pnpm --filter @fashion/api start:dev",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down",

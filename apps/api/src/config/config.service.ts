@@ -72,4 +72,15 @@ export class ConfigService {
   get replicateApiToken(): string {
     return process.env.REPLICATE_API_TOKEN || '';
   }
+
+  // Background removal - rembg (primary, self-hosted)
+  get rembgUrl(): string {
+    return process.env.REMBG_URL || 'http://localhost:7100';
+  }
+
+  // Background removal - remove.bg (fallback, cloud API)
+  get removeBgApiKey(): string {
+    return process.env.REMOVE_BG_API_KEY || '';
+  }
+
 }

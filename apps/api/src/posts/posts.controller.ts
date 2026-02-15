@@ -29,4 +29,14 @@ export class PostsController {
     await this.postsService.unsavePost(req.user.userId, id);
     return { success: true };
   }
+
+  @Post(':id/tagged-garments/:garmentId/save')
+  async saveTaggedGarment(
+    @Param('id') id: string,
+    @Param('garmentId') garmentId: string,
+    @Request() req: AuthRequest,
+  ) {
+    await this.postsService.saveTaggedGarment(req.user.userId, id, garmentId);
+    return { success: true };
+  }
 }

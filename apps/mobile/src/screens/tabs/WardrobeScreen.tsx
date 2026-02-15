@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
+  Animated,
   Image,
   TouchableOpacity,
   ActivityIndicator,
@@ -12,53 +13,63 @@ import {
   RefreshControl,
   Modal,
   Pressable,
+  Alert,
+  Share,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { CreatedOutfit, WardrobeItem, UserGarment } from '@fashion/shared';
-import Animated, {
-  Easing,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { api } from '../../services/api';
+import { CreatedOutfit, WardrobeItem } from '@fashion/shared';
+import { api, type WardrobeWorthResponse } from '../../services/api';
 import { RootStackParamList } from '../../navigation/types';
-import { AppTheme, useAppTheme } from '../../theme';
+import { useAppTheme } from '../../theme';
 import { LineIcon } from '../../components/LineIcon';
+import { WardrobeHeaderTabs, WardrobeHeaderTab } from '../../components/WardrobeHeaderTabs';
+import { OutfitCanvas } from '../../outfit/OutfitCanvas';
+import {
+  defaultAspectRatioForCategory,
+  normalizeClothingCategory,
+  type ClothingItem,
+} from '../../outfit/types';
+import {
+  createEmptyWardrobeAssetsByCategory,
+  PremiumWardrobeSections,
+  syncRemoteGarmentsToLocal,
+  type WardrobeAsset,
+  type WardrobeAssetsByCategory,
+  wardrobeAssetRepository,
+} from '../../wardrobe';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ITEM_SPACING = 12;
 const SIDE_PADDING = 16;
 const NUM_COLUMNS = 3;
 const ITEM_WIDTH = (SCREEN_WIDTH - SIDE_PADDING * 2 - ITEM_SPACING * (NUM_COLUMNS - 1)) / NUM_COLUMNS;
-const EMPTY_WARDROBE_PHOTO =
-  'https://images.pexels.com/photos/7601165/pexels-photo-7601165.jpeg?auto=compress&cs=tinysrgb&w=1200';
+const OUTFIT_CARD_WIDTH = SCREEN_WIDTH - SIDE_PADDING * 2;
+const OUTFIT_SNAP_INTERVAL = OUTFIT_CARD_WIDTH + ITEM_SPACING;
+const EMPTY_ART_SIZE = Math.min(SCREEN_WIDTH * 0.62, 280);
+const EMPTY_WARDROBE_ASSET = require('../../../assets/empty-wardrobe.png');
 
-type TabType = 'my-garments' | 'my-outfits' | 'saved-items';
+type TabType = WardrobeHeaderTab;
 type RootNav = NativeStackNavigationProp<RootStackParamList>;
 
 export function WardrobeScreen() {
   const navigation = useNavigation<RootNav>();
   const { theme } = useAppTheme();
-  const [activeTab, setActiveTab] = useState<TabType>('my-garments');
+  const [activeTab, setActiveTab] = useState<TabType>('uploaded');
 
   // Saved items from posts
   const [savedItems, setSavedItems] = useState<WardrobeItem[]>([]);
   const [savedItemsLoading, setSavedItemsLoading] = useState(true);
-
-  // User-uploaded garments
-  const [myGarments, setMyGarments] = useState<UserGarment[]>([]);
-  const [myGarmentsLoading, setMyGarmentsLoading] = useState(true);
-  const [garmentCategories, setGarmentCategories] = useState<string[]>([]);
-
-  // Saved outfits
   const [savedOutfits, setSavedOutfits] = useState<CreatedOutfit[]>([]);
-  const [outfitsLoading, setOutfitsLoading] = useState(true);
-  const [outfitSwipeIndex, setOutfitSwipeIndex] = useState(0);
+  const [savedOutfitsLoading, setSavedOutfitsLoading] = useState(true);
+
+  // Local premium wardrobe assets
+  const [localWardrobe, setLocalWardrobe] = useState<WardrobeAssetsByCategory>(
+    createEmptyWardrobeAssetsByCategory(),
+  );
+  const [localWardrobeLoading, setLocalWardrobeLoading] = useState(true);
+  const [wearWorth, setWearWorth] = useState<WardrobeWorthResponse | null>(null);
+  const [wearWorthLoading, setWearWorthLoading] = useState(true);
 
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -66,6 +77,8 @@ export function WardrobeScreen() {
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [availableColors, setAvailableColors] = useState<string[]>([]);
   const [showActionSheet, setShowActionSheet] = useState(false);
+  const [creatingRandomOutfit, setCreatingRandomOutfit] = useState(false);
+  const outfitScrollX = useRef(new Animated.Value(0)).current;
 
   // Reload data when tab comes into focus
   useFocusEffect(
@@ -76,13 +89,14 @@ export function WardrobeScreen() {
   );
 
   const loadAllData = async () => {
-    if (activeTab === 'my-garments') {
-      await loadMyGarments();
-    } else if (activeTab === 'my-outfits') {
-      await loadSavedOutfits();
-    } else {
+    await loadWearsWorth();
+    if (activeTab === 'uploaded') {
+      await loadLocalWardrobeAssets();
+    } else if (activeTab === 'saved') {
       await loadFilters();
       await loadSavedItems();
+    } else {
+      await loadSavedOutfits();
     }
   };
 
@@ -116,22 +130,36 @@ export function WardrobeScreen() {
     }
   };
 
-  const loadMyGarments = async (isRefreshing = false) => {
+  const loadWearsWorth = async (isRefreshing = false) => {
+    try {
+      if (!isRefreshing) {
+        setWearWorthLoading(true);
+      }
+      const value = await api.getWardrobeWorth();
+      setWearWorth(value);
+    } catch (error) {
+      console.error('Failed to load wardrobe worth:', error);
+    } finally {
+      setWearWorthLoading(false);
+    }
+  };
+
+  const loadLocalWardrobeAssets = async (isRefreshing = false) => {
     try {
       if (isRefreshing) {
         setRefreshing(true);
       } else {
-        setMyGarmentsLoading(true);
+        setLocalWardrobeLoading(true);
       }
-      const category = selectedCategory !== 'All' ? selectedCategory : undefined;
-      const response = await api.listUserGarments(category, 100);
-      setMyGarments(response.garments);
-      setGarmentCategories(response.categories);
-      console.log(`[WardrobeScreen] Loaded ${response.garments.length} user garments`);
+      await syncRemoteGarmentsToLocal({ limit: 240 });
+      const grouped = await wardrobeAssetRepository.listByCategory();
+      setLocalWardrobe(grouped);
+      const total = Object.values(grouped).reduce((count, items) => count + items.length, 0);
+      console.log(`[WardrobeScreen] Loaded ${total} local wardrobe assets`);
     } catch (error) {
-      console.error('Failed to load user garments:', error);
+      console.error('Failed to load local wardrobe assets:', error);
     } finally {
-      setMyGarmentsLoading(false);
+      setLocalWardrobeLoading(false);
       setRefreshing(false);
     }
   };
@@ -141,17 +169,28 @@ export function WardrobeScreen() {
       if (isRefreshing) {
         setRefreshing(true);
       } else {
-        setOutfitsLoading(true);
+        setSavedOutfitsLoading(true);
       }
       const response = await api.listSavedOutfits();
-      setSavedOutfits(response.outfits);
-      console.log(`[WardrobeScreen] Loaded ${response.outfits.length} saved outfits`);
+      const hydrated = await Promise.all(
+        response.outfits.map(async (outfit) => {
+          if (Array.isArray(outfit.items) && outfit.items.length > 0) {
+            return outfit;
+          }
+          try {
+            return await api.getOutfit(outfit.id);
+          } catch (error) {
+            console.warn(`[WardrobeScreen] Failed to hydrate outfit ${outfit.id}`, error);
+            return outfit;
+          }
+        }),
+      );
+      setSavedOutfits(hydrated);
+      console.log(`[WardrobeScreen] Loaded ${hydrated.length} outfits`);
     } catch (error) {
-      console.error('Failed to load saved outfits:', error);
-      // If endpoint doesn't exist yet, just set empty array
-      setSavedOutfits([]);
+      console.error('Failed to load outfits:', error);
     } finally {
-      setOutfitsLoading(false);
+      setSavedOutfitsLoading(false);
       setRefreshing(false);
     }
   };
@@ -160,23 +199,17 @@ export function WardrobeScreen() {
     loadAllData();
   }, [selectedCategory, selectedColor, activeTab]);
 
-  useEffect(() => {
-    if (savedOutfits.length === 0) {
-      setOutfitSwipeIndex(0);
-      return;
-    }
-
-    setOutfitSwipeIndex((previous) => normalizeLoopIndex(previous, savedOutfits.length));
-  }, [savedOutfits.length]);
-
   const handleRefresh = () => {
-    if (activeTab === 'my-garments') {
-      loadMyGarments(true);
-    } else if (activeTab === 'my-outfits') {
-      loadSavedOutfits(true);
-    } else {
+    if (activeTab === 'uploaded') {
+      loadLocalWardrobeAssets(true);
+      loadWearsWorth(true);
+    } else if (activeTab === 'saved') {
       loadFilters();
       loadSavedItems(true);
+      loadWearsWorth(true);
+    } else {
+      loadSavedOutfits(true);
+      loadWearsWorth(true);
     }
   };
 
@@ -188,19 +221,106 @@ export function WardrobeScreen() {
         eventName: 'item_removed_from_wardrobe',
         properties: { itemId },
       });
-      loadFilters();
+      await Promise.all([loadFilters(), loadWearsWorth(true)]);
     } catch (error) {
       console.error('Failed to remove item:', error);
       loadSavedItems();
     }
   };
 
-  const handleUploadGarment = () => {
-    navigation.navigate('UploadGarment');
+  const handleDeleteWardrobeAsset = (asset: WardrobeAsset) => {
+    Alert.alert(
+      'Delete Item',
+      'Remove this clothing item from your wardrobe?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await wardrobeAssetRepository.deleteById(asset.id);
+              if (asset.sourceGarmentId) {
+                try {
+                  await api.deleteUserGarment(asset.sourceGarmentId);
+                } catch (deleteRemoteError) {
+                  console.warn('[WardrobeScreen] Failed to delete remote garment', deleteRemoteError);
+                }
+              }
+              await Promise.all([loadLocalWardrobeAssets(), loadWearsWorth(true)]);
+            } catch (error) {
+              console.error('Failed to delete wardrobe item:', error);
+              Alert.alert('Error', 'Failed to delete this item');
+            }
+          },
+        },
+      ],
+    );
   };
 
-  const handleViewGarmentDetail = (garmentId: string) => {
-    navigation.navigate('GarmentDetail', { garmentId });
+  const handleOpenSavedModel = (postId: string) => {
+    navigation.navigate('PostDetail', { postId });
+  };
+
+  const handleDownloadModelPhoto = async (imageUrl: string) => {
+    try {
+      await Share.share({
+        message: imageUrl,
+        url: imageUrl,
+      });
+    } catch (error) {
+      console.error('Failed to share model photo:', error);
+      Alert.alert('Error', 'Could not open download/share options');
+    }
+  };
+
+  const handleDeleteOutfit = (outfitId: string) => {
+    Alert.alert(
+      'Delete Outfit',
+      'Remove this outfit from your saved outfits?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.deleteOutfit(outfitId);
+              setSavedOutfits((prev) => prev.filter((outfit) => outfit.id !== outfitId));
+            } catch (error) {
+              console.error('Failed to delete outfit:', error);
+              Alert.alert('Error', 'Failed to delete outfit');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleGenerateRandomOutfit = async () => {
+    if (creatingRandomOutfit) return;
+
+    try {
+      setCreatingRandomOutfit(true);
+      const response = await api.generateRandomOutfit();
+      const created = response.outfit;
+      setSavedOutfits((previous) => [created, ...previous.filter((outfit) => outfit.id !== created.id)]);
+      setActiveTab('outfits');
+      Alert.alert('Outfit Created', 'A random outfit was generated from your wardrobe.');
+    } catch (error: any) {
+      console.error('Failed to generate random outfit:', error);
+      Alert.alert(
+        'Could Not Create Outfit',
+        error?.message ||
+          'Add more pieces (top, bottom, shoes or one-piece + shoes) and try again.',
+      );
+    } finally {
+      setCreatingRandomOutfit(false);
+    }
+  };
+
+  const handleUploadGarment = () => {
+    navigation.navigate('UploadGarment');
   };
 
   const handleCreateOutfit = () => {
@@ -226,115 +346,39 @@ export function WardrobeScreen() {
       flex: 1,
       backgroundColor: theme.colors.background,
     },
-    tabsContainer: {
-      flexDirection: 'row',
-      alignSelf: 'center',
-      marginTop: 10,
-      marginBottom: 8,
-      padding: 3,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surfaceElevated,
-      width: 168,
-    },
-    tab: {
-      flex: 1,
-      paddingVertical: 6,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 9,
-    },
-    tabActive: {
-      backgroundColor: theme.colors.surface,
-    },
-    tabIconWrap: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    tabIconWrapActive: {
-      backgroundColor: theme.colors.surfaceMuted,
-    },
-    tabIcon: {
-      fontSize: 17,
-      color: theme.colors.textSecondary,
-    },
-    tabIconActive: {
-      color: theme.colors.tint,
-    },
-    // Empty State - Premium Wardrobe
     emptyWardrobeContainer: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 24,
-      paddingVertical: 40,
+      paddingHorizontal: 28,
+      paddingVertical: 56,
     },
     emptyPhotoCard: {
-      width: SCREEN_WIDTH * 0.76,
-      height: SCREEN_WIDTH * 0.92,
-      borderRadius: 20,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      marginBottom: 22,
-      backgroundColor: theme.colors.surfaceMuted,
+      width: EMPTY_ART_SIZE,
+      height: EMPTY_ART_SIZE,
+      marginBottom: 26,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     emptyPhoto: {
       width: '100%',
       height: '100%',
-    },
-    emptyPhotoOverlay: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      height: 120,
-      backgroundColor: 'rgba(0,0,0,0.18)',
+      tintColor: theme.colors.textTertiary,
+      opacity: theme.mode === 'dark' ? 0.9 : 0.82,
     },
     emptyWardrobeText: {
-      fontSize: 24,
-      fontWeight: '700',
+      fontSize: 22,
+      fontWeight: '600',
       color: theme.colors.textPrimary,
-      marginBottom: 6,
+      marginBottom: 8,
       textAlign: 'center',
     },
     emptyWardrobeSubtext: {
-      fontSize: 14,
+      fontSize: 15,
       color: theme.colors.textSecondary,
       textAlign: 'center',
-      marginBottom: 18,
-      lineHeight: 20,
-      maxWidth: 320,
-    },
-    emptyActionRow: {
-      flexDirection: 'row',
-      gap: 10,
-    },
-    addItemButton: {
-      paddingHorizontal: 16,
-      paddingVertical: 11,
-      borderRadius: 24,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      minWidth: 136,
-      alignItems: 'center',
-    },
-    addItemButtonPrimary: {
-      backgroundColor: theme.colors.tint,
-      borderColor: theme.colors.tint,
-    },
-    addItemButtonText: {
-      color: theme.colors.textPrimary,
-      fontSize: 13,
-      fontWeight: '600',
-    },
-    addItemButtonTextPrimary: {
-      color: theme.mode === 'dark' ? '#0f172a' : '#ffffff',
+      lineHeight: 22,
+      maxWidth: 332,
     },
     filterSection: {
       paddingTop: 10,
@@ -467,6 +511,22 @@ export function WardrobeScreen() {
       fontSize: 14,
       fontWeight: '600',
     },
+    downloadButton: {
+      position: 'absolute',
+      left: 6,
+      bottom: 6,
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    downloadButtonText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: '700',
+    },
     itemInfo: {
       padding: 8,
     },
@@ -579,29 +639,73 @@ export function WardrobeScreen() {
       borderWidth: 1,
       borderColor: theme.colors.border,
     },
+    outfitsListContainer: {
+      paddingHorizontal: SIDE_PADDING,
+      paddingTop: 12,
+      paddingBottom: 120,
+    },
+    outfitsHorizontalListContainer: {
+      paddingHorizontal: SIDE_PADDING,
+      paddingTop: 12,
+      paddingBottom: 120,
+    },
+    outfitCardWrapper: {
+      width: OUTFIT_CARD_WIDTH,
+      marginRight: ITEM_SPACING,
+      paddingVertical: 4,
+    },
     outfitCard: {
       backgroundColor: theme.colors.surface,
-      borderRadius: 16,
-      padding: 16,
-      marginBottom: 16,
+      borderRadius: 24,
       borderWidth: 1,
       borderColor: theme.colors.border,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 14 },
+      shadowOpacity: theme.mode === 'dark' ? 0.34 : 0.14,
+      shadowRadius: 22,
+      elevation: 9,
+    },
+    outfitCanvasWrap: {
+      height: 420,
+      padding: 12,
+      backgroundColor: theme.colors.surfaceMuted,
+    },
+    outfitFallbackWrap: {
+      padding: 12,
+      backgroundColor: theme.colors.surfaceMuted,
+    },
+    outfitFooter: {
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.divider,
+      minHeight: 82,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: theme.colors.surface,
     },
     outfitHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 12,
+      minHeight: 36,
+    },
+    outfitMetaBlock: {
+      flex: 1,
+      paddingRight: 12,
     },
     outfitTitle: {
-      fontSize: 15,
+      fontSize: 20,
       fontWeight: '700',
       color: theme.colors.textPrimary,
       textTransform: 'capitalize',
     },
     outfitMeta: {
-      fontSize: 12,
+      fontSize: 14,
       color: theme.colors.textSecondary,
+      marginTop: 4,
     },
     outfitGarmentsRow: {
       flexDirection: 'row',
@@ -609,8 +713,8 @@ export function WardrobeScreen() {
     },
     outfitCover: {
       width: '100%',
-      aspectRatio: 0.78,
-      borderRadius: 12,
+      aspectRatio: 0.92,
+      borderRadius: 16,
       backgroundColor: theme.colors.surfaceMuted,
     },
     outfitGarmentThumb: {
@@ -619,13 +723,89 @@ export function WardrobeScreen() {
       borderRadius: 8,
       backgroundColor: theme.colors.surfaceMuted,
     },
+    worthCard: {
+      marginHorizontal: SIDE_PADDING,
+      marginTop: 8,
+      marginBottom: 10,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      paddingHorizontal: 14,
+      paddingTop: 12,
+      paddingBottom: 10,
+    },
+    worthHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    worthLabel: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+    },
+    worthAmount: {
+      fontSize: 30,
+      fontWeight: '700',
+      color: theme.colors.textPrimary,
+      letterSpacing: 0.2,
+    },
+    worthMeta: {
+      marginTop: 2,
+      fontSize: 12,
+      color: theme.colors.textSecondary,
+      fontWeight: '500',
+    },
+    randomOutfitSection: {
+      paddingHorizontal: SIDE_PADDING,
+      paddingTop: 8,
+      paddingBottom: 6,
+    },
+    randomOutfitButton: {
+      minHeight: 46,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surfaceElevated,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingHorizontal: 14,
+    },
+    randomOutfitButtonDisabled: {
+      opacity: 0.7,
+    },
+    randomOutfitButtonText: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: theme.colors.textPrimary,
+    },
+    outfitDeleteButton: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
   });
 
   const renderSavedItem = ({ item }: { item: WardrobeItem }) => {
     const imageUrl = item.clothingItem.post.imageUrls[item.clothingItem.imageIndex];
 
     return (
-      <View style={styles.itemContainer}>
+      <TouchableOpacity
+        style={styles.itemContainer}
+        onPress={() => handleOpenSavedModel(item.clothingItem.postId)}
+        activeOpacity={0.9}
+      >
         <Image
           source={{ uri: imageUrl }}
           style={styles.itemImage}
@@ -636,6 +816,12 @@ export function WardrobeScreen() {
           onPress={() => handleRemoveSavedItem(item.id)}
         >
           <Text style={styles.removeButtonText}>✕</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.downloadButton}
+          onPress={() => handleDownloadModelPhoto(imageUrl)}
+        >
+          <Text style={styles.downloadButtonText}>↓</Text>
         </TouchableOpacity>
         <View style={styles.itemInfo}>
           {item.clothingItem.brand && (
@@ -652,46 +838,6 @@ export function WardrobeScreen() {
             <Text style={styles.itemPrice}>${item.clothingItem.price.toFixed(2)}</Text>
           )}
         </View>
-      </View>
-    );
-  };
-
-  const renderMyGarment = ({ item }: { item: UserGarment }) => {
-    const imageUrl = item.thumbnailUrl || item.processedUrl || item.originalUrl;
-    const isProcessing = item.status === 'processing';
-
-    return (
-      <TouchableOpacity
-        style={styles.itemContainer}
-        onPress={() => handleViewGarmentDetail(item.id)}
-        disabled={isProcessing}
-      >
-        {imageUrl ? (
-          <Image source={{ uri: imageUrl }} style={styles.itemImage} resizeMode="cover" />
-        ) : (
-          <View style={[styles.itemImage, styles.placeholderImage]}>
-            <Text style={styles.placeholderText}>No Photo</Text>
-          </View>
-        )}
-
-        {isProcessing && (
-          <View style={styles.processingOverlay}>
-            <ActivityIndicator color="#fff" size="small" />
-            <Text style={styles.processingText}>Processing...</Text>
-          </View>
-        )}
-
-        {item.category && (
-          <View style={styles.categoryBadge}>
-            <Text style={styles.categoryBadgeText}>{item.category}</Text>
-          </View>
-        )}
-
-        {item.dominantHex && (
-          <View style={styles.colorIndicator}>
-            <View style={[styles.colorDot, { backgroundColor: item.dominantHex }]} />
-          </View>
-        )}
       </TouchableOpacity>
     );
   };
@@ -699,12 +845,11 @@ export function WardrobeScreen() {
   const renderEmptyMyGarments = () => (
     <View style={styles.emptyWardrobeContainer}>
       <View style={styles.emptyPhotoCard}>
-        <Image source={{ uri: EMPTY_WARDROBE_PHOTO }} style={styles.emptyPhoto} resizeMode="cover" />
-        <View style={styles.emptyPhotoOverlay} />
+        <Image source={EMPTY_WARDROBE_ASSET} style={styles.emptyPhoto} resizeMode="contain" />
       </View>
-      <Text style={styles.emptyWardrobeText}>Your Wardrobe is Empty</Text>
+      <Text style={styles.emptyWardrobeText}>Your wardrobe is empty</Text>
       <Text style={styles.emptyWardrobeSubtext}>
-        Build your digital closet with high-quality pieces that represent your style.
+        Add your first item to start styling outfits.
       </Text>
     </View>
   );
@@ -712,12 +857,11 @@ export function WardrobeScreen() {
   const renderEmptySavedItems = () => (
     <View style={styles.emptyWardrobeContainer}>
       <View style={styles.emptyPhotoCard}>
-        <Image source={{ uri: EMPTY_WARDROBE_PHOTO }} style={styles.emptyPhoto} resizeMode="cover" />
-        <View style={styles.emptyPhotoOverlay} />
+        <Image source={EMPTY_WARDROBE_ASSET} style={styles.emptyPhoto} resizeMode="contain" />
       </View>
-      <Text style={styles.emptyWardrobeText}>No Saved Items Yet</Text>
+      <Text style={styles.emptyWardrobeText}>No saved pieces yet</Text>
       <Text style={styles.emptyWardrobeSubtext}>
-        Save items from Explore and they will appear here for easy styling later.
+        Save looks from Explore and they will appear here.
       </Text>
     </View>
   );
@@ -725,71 +869,119 @@ export function WardrobeScreen() {
   const renderEmptyOutfits = () => (
     <View style={styles.emptyWardrobeContainer}>
       <View style={styles.emptyPhotoCard}>
-        <Image source={{ uri: EMPTY_WARDROBE_PHOTO }} style={styles.emptyPhoto} resizeMode="cover" />
-        <View style={styles.emptyPhotoOverlay} />
+        <Image source={EMPTY_WARDROBE_ASSET} style={styles.emptyPhoto} resizeMode="contain" />
       </View>
-      <Text style={styles.emptyWardrobeText}>No Outfits Created</Text>
+      <Text style={styles.emptyWardrobeText}>No outfits yet</Text>
       <Text style={styles.emptyWardrobeSubtext}>
-        Create complete looks from your wardrobe and save them for quick styling.
+        Create and save an outfit to see it here.
       </Text>
     </View>
   );
 
-  const categories = activeTab === 'my-garments'
-    ? ['All', ...garmentCategories]
-    : ['All', ...availableCategories];
-  const colors = ['All', ...availableColors];
+  const renderSavedOutfit = ({ item, index }: { item: CreatedOutfit; index: number }) => {
+    const previewUrl =
+      item.coverImageUrl ||
+      item.items?.[0]?.imageCutoutUrl ||
+      item.items?.[0]?.imageOriginalUrl ||
+      null;
+    const outfitItemCount = item.itemCount ?? item.items?.length ?? 0;
+    const canvasItems: ClothingItem[] = (item.items || []).map((outfitItem) => {
+      const category = normalizeClothingCategory(outfitItem.category || undefined);
+      return {
+        id: outfitItem.id,
+        imageUri: outfitItem.imageCutoutUrl || outfitItem.imageOriginalUrl,
+        category,
+        aspectRatio: defaultAspectRatioForCategory(category),
+      };
+    });
 
-  const loading = activeTab === 'my-garments' ? myGarmentsLoading
-    : activeTab === 'my-outfits' ? outfitsLoading
-    : savedItemsLoading;
+    const inputRange = [
+      (index - 1) * OUTFIT_SNAP_INTERVAL,
+      index * OUTFIT_SNAP_INTERVAL,
+      (index + 1) * OUTFIT_SNAP_INTERVAL,
+    ];
+
+    const scale = outfitScrollX.interpolate({
+      inputRange,
+      outputRange: [0.93, 1, 0.93],
+      extrapolate: 'clamp',
+    });
+
+    const translateY = outfitScrollX.interpolate({
+      inputRange,
+      outputRange: [10, 0, 10],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <Animated.View style={[styles.outfitCardWrapper, { transform: [{ scale }, { translateY }] }]}>
+        <View style={styles.outfitCard}>
+          {canvasItems.length > 0 ? (
+            <View style={styles.outfitCanvasWrap}>
+              <OutfitCanvas items={canvasItems} />
+            </View>
+          ) : previewUrl ? (
+            <View style={styles.outfitFallbackWrap}>
+              <Image source={{ uri: previewUrl }} style={styles.outfitCover} resizeMode="cover" />
+            </View>
+          ) : (
+            <View style={[styles.outfitCanvasWrap, styles.placeholderImage]}>
+              <Text style={styles.placeholderText}>No Preview</Text>
+            </View>
+          )}
+          <View style={styles.outfitFooter}>
+            <View style={styles.outfitHeader}>
+              <View style={styles.outfitMetaBlock}>
+                <Text style={styles.outfitTitle} numberOfLines={1}>
+                  {item.name?.trim() || 'Untitled Outfit'}
+                </Text>
+                <Text style={styles.outfitMeta}>
+                  {outfitItemCount} {outfitItemCount === 1 ? 'item' : 'items'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.outfitDeleteButton}
+                onPress={() => handleDeleteOutfit(item.id)}
+                activeOpacity={0.88}
+              >
+                <LineIcon name="trash" size={16} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Animated.View>
+    );
+  };
+
+  const categories = activeTab === 'saved' ? ['All', ...availableCategories] : [];
+  const colors = ['All', ...availableColors];
+  const localWardrobeCount = Object.values(localWardrobe).reduce((count, items) => count + items.length, 0);
+  const wearsWorthAmount = wearWorth?.totalValue ?? 0;
+  const wearsWorthValueText = wearWorthLoading ? '...' : formatCurrency(wearsWorthAmount);
+  const wearsWorthMeta = wearWorth
+    ? `${wearWorth.pricedItems} priced ${wearWorth.pricedItems === 1 ? 'item' : 'items'} • ${wearWorth.totalItems} total saved items`
+    : 'No priced saved items yet';
+
+  const loading = activeTab === 'uploaded'
+    ? localWardrobeLoading
+    : activeTab === 'saved'
+      ? savedItemsLoading
+      : savedOutfitsLoading;
 
   return (
     <View style={styles.container}>
-      {/* Tabs */}
-      <View style={styles.tabsContainer}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'my-garments' && styles.tabActive]}
-          onPress={() => setActiveTab('my-garments')}
-        >
-          <View style={[styles.tabIconWrap, activeTab === 'my-garments' && styles.tabIconWrapActive]}>
-            <LineIcon
-              name="wardrobe"
-              size={18}
-              style={[styles.tabIcon, activeTab === 'my-garments' && styles.tabIconActive]}
-            />
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'my-outfits' && styles.tabActive]}
-          onPress={() => setActiveTab('my-outfits')}
-        >
-          <View style={[styles.tabIconWrap, activeTab === 'my-outfits' && styles.tabIconWrapActive]}>
-            <LineIcon
-              name="spark"
-              size={18}
-              style={[styles.tabIcon, activeTab === 'my-outfits' && styles.tabIconActive]}
-            />
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'saved-items' && styles.tabActive]}
-          onPress={() => setActiveTab('saved-items')}
-        >
-          <View style={[styles.tabIconWrap, activeTab === 'saved-items' && styles.tabIconWrapActive]}>
-            <LineIcon
-              name="bookmark"
-              size={18}
-              style={[styles.tabIcon, activeTab === 'saved-items' && styles.tabIconActive]}
-            />
-          </View>
-        </TouchableOpacity>
+      <WardrobeHeaderTabs activeTab={activeTab} onTabChange={setActiveTab} />
+      <View style={styles.worthCard}>
+        <View style={styles.worthHeaderRow}>
+          <Text style={styles.worthLabel}>Your Wears Worth</Text>
+          {wearWorthLoading ? <ActivityIndicator size="small" color={theme.colors.tint} /> : null}
+        </View>
+        <Text style={styles.worthAmount}>{wearsWorthValueText}</Text>
+        <Text style={styles.worthMeta}>{wearsWorthMeta}</Text>
       </View>
 
       {/* Category Filter */}
-      {activeTab !== 'my-outfits' && categories.length > 1 && (
+      {activeTab === 'saved' && categories.length > 1 && (
         <View style={styles.filterSection}>
           <Text style={styles.filterLabel}>Category</Text>
           <ScrollView
@@ -821,7 +1013,7 @@ export function WardrobeScreen() {
       )}
 
       {/* Color Filter - Only for saved items */}
-      {activeTab === 'saved-items' && colors.length > 1 && (
+      {activeTab === 'saved' && colors.length > 1 && (
         <View style={styles.filterSection}>
           <Text style={styles.filterLabel}>Color</Text>
           <ScrollView
@@ -852,19 +1044,54 @@ export function WardrobeScreen() {
         </View>
       )}
 
+      {activeTab === 'outfits' && (
+        <View style={styles.randomOutfitSection}>
+          <TouchableOpacity
+            style={[
+              styles.randomOutfitButton,
+              creatingRandomOutfit && styles.randomOutfitButtonDisabled,
+            ]}
+            onPress={handleGenerateRandomOutfit}
+            disabled={creatingRandomOutfit}
+            activeOpacity={0.9}
+          >
+            {creatingRandomOutfit ? (
+              <ActivityIndicator size="small" color={theme.colors.tint} />
+            ) : (
+              <LineIcon name="spark" size={18} color={theme.colors.tint} />
+            )}
+            <Text style={styles.randomOutfitButtonText}>
+              {creatingRandomOutfit ? 'Generating Outfit...' : 'Generate Random Outfit'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Content */}
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.colors.tint} />
         </View>
-      ) : activeTab === 'my-garments' ? (
-        myGarments.length === 0 ? (
+      ) : activeTab === 'uploaded' ? (
+        localWardrobeCount === 0 ? (
           renderEmptyMyGarments()
         ) : (
+          <PremiumWardrobeSections
+            groupedAssets={localWardrobe}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            onAddPress={() => handleUploadGarment()}
+            onDeleteAsset={handleDeleteWardrobeAsset}
+          />
+        )
+      ) : activeTab === 'saved' ? (
+        savedItems.length === 0 ? (
+          renderEmptySavedItems()
+        ) : (
           <FlatList
-            key={`wardrobe-my-garments-${NUM_COLUMNS}`}
-            data={myGarments}
-            renderItem={renderMyGarment}
+            key={`wardrobe-saved-items-${NUM_COLUMNS}`}
+            data={savedItems}
+            renderItem={renderSavedItem}
             keyExtractor={(item) => item.id}
             numColumns={NUM_COLUMNS}
             contentContainerStyle={styles.gridContainer}
@@ -879,32 +1106,33 @@ export function WardrobeScreen() {
             }
           />
         )
-      ) : activeTab === 'my-outfits' ? (
+      ) : (
         savedOutfits.length === 0 ? (
           renderEmptyOutfits()
         ) : (
-          <View style={styles.centered}>
-            <OutfitSwipeDeck
-              outfits={savedOutfits}
-              currentIndex={outfitSwipeIndex}
-              onIndexChange={setOutfitSwipeIndex}
-              theme={theme}
-            />
-          </View>
-        )
-      ) : (
-        savedItems.length === 0 ? (
-          renderEmptySavedItems()
-        ) : (
-          <FlatList
-            key={`wardrobe-saved-items-${NUM_COLUMNS}`}
-            data={savedItems}
-            renderItem={renderSavedItem}
+          <Animated.FlatList
+            key="wardrobe-saved-outfits-horizontal"
+            data={savedOutfits}
+            renderItem={renderSavedOutfit}
             keyExtractor={(item) => item.id}
-            numColumns={NUM_COLUMNS}
-            contentContainerStyle={styles.gridContainer}
-            columnWrapperStyle={styles.row}
-            showsVerticalScrollIndicator={false}
+            horizontal
+            snapToInterval={OUTFIT_SNAP_INTERVAL}
+            snapToAlignment="start"
+            decelerationRate="fast"
+            disableIntervalMomentum
+            bounces={false}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.outfitsHorizontalListContainer}
+            onScroll={Animated.event(
+              [{ nativeEvent: { contentOffset: { x: outfitScrollX } } }],
+              { useNativeDriver: true },
+            )}
+            scrollEventThrottle={16}
+            getItemLayout={(_, index) => ({
+              length: OUTFIT_SNAP_INTERVAL,
+              offset: OUTFIT_SNAP_INTERVAL * index,
+              index,
+            })}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -971,284 +1199,10 @@ export function WardrobeScreen() {
   );
 }
 
-interface OutfitSwipeDeckProps {
-  outfits: CreatedOutfit[];
-  currentIndex: number;
-  onIndexChange: (index: number) => void;
-  theme: AppTheme;
-}
-
-function OutfitSwipeDeck({ outfits, currentIndex, onIndexChange, theme }: OutfitSwipeDeckProps) {
-  const cardWidth = SCREEN_WIDTH - SIDE_PADDING * 2 - 12;
-  const cardHeight = Math.round(cardWidth * 1.28);
-  const swipeThreshold = cardWidth * 0.22;
-  const swipeExitDistance = cardWidth * 1.1;
-
-  const current = outfits[normalizeLoopIndex(currentIndex, outfits.length)];
-  const next = outfits[normalizeLoopIndex(currentIndex + 1, outfits.length)];
-  const previous = outfits[normalizeLoopIndex(currentIndex - 1, outfits.length)];
-
-  const translateX = useSharedValue(0);
-  const isAnimating = useSharedValue(false);
-
-  const deckStyles = useMemo(() => createDeckStyles(theme, cardHeight), [cardHeight, theme]);
-
-  const finalizeSwipe = useCallback(
-    (direction: 1 | -1) => {
-      onIndexChange(normalizeLoopIndex(currentIndex + direction, outfits.length));
-    },
-    [currentIndex, onIndexChange, outfits.length],
-  );
-
-  const panGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetX([-12, 12])
-        .onUpdate((event) => {
-          if (isAnimating.value) return;
-          translateX.value = event.translationX;
-        })
-        .onEnd((event) => {
-          if (isAnimating.value) return;
-
-          const distance = Math.abs(translateX.value);
-          const velocity = Math.abs(event.velocityX);
-          const shouldAdvance = distance > swipeThreshold || velocity > 850;
-
-          if (!shouldAdvance) {
-            translateX.value = withTiming(0, {
-              duration: 360,
-              easing: Easing.bezier(0.22, 1, 0.36, 1),
-            });
-            return;
-          }
-
-          const swipeLeft = translateX.value < 0;
-          const exitDirection = swipeLeft ? -1 : 1;
-          const indexDirection = swipeLeft ? 1 : -1;
-
-          isAnimating.value = true;
-          translateX.value = withTiming(
-            exitDirection * swipeExitDistance,
-            {
-              duration: 300,
-              easing: Easing.bezier(0.22, 1, 0.36, 1),
-            },
-            (finished) => {
-              if (finished) {
-                runOnJS(finalizeSwipe)(indexDirection as 1 | -1);
-                translateX.value = 0;
-              }
-              isAnimating.value = false;
-            },
-          );
-        }),
-    [finalizeSwipe, isAnimating, swipeExitDistance, swipeThreshold, translateX],
-  );
-
-  const activeCardStyle = useAnimatedStyle(() => {
-    const rotation = interpolate(translateX.value, [-swipeExitDistance, 0, swipeExitDistance], [-8, 0, 8]);
-    const motion = Math.min(1, Math.abs(translateX.value) / swipeExitDistance);
-    return {
-      transform: [
-        { translateX: translateX.value },
-        { rotate: `${rotation}deg` },
-        { scale: 1 - motion * 0.03 },
-      ],
-    };
-  });
-
-  const nextCardStyle = useAnimatedStyle(() => {
-    const reveal = clamp01(-translateX.value / swipeThreshold);
-    return {
-      opacity: 0.42 + reveal * 0.58,
-      transform: [{ scale: 0.93 + reveal * 0.07 }, { translateY: 12 - reveal * 12 }],
-    };
-  });
-
-  const previousCardStyle = useAnimatedStyle(() => {
-    const reveal = clamp01(translateX.value / swipeThreshold);
-    return {
-      opacity: 0.42 + reveal * 0.58,
-      transform: [{ scale: 0.93 + reveal * 0.07 }, { translateY: 12 - reveal * 12 }],
-    };
-  });
-
-  return (
-    <View style={deckStyles.wrapper}>
-      <View style={deckStyles.stage}>
-        <Animated.View pointerEvents="none" style={[deckStyles.cardLayer, previousCardStyle]}>
-          <OutfitSwipeCard outfit={previous} theme={theme} cardHeight={cardHeight} />
-        </Animated.View>
-
-        <Animated.View pointerEvents="none" style={[deckStyles.cardLayer, nextCardStyle]}>
-          <OutfitSwipeCard outfit={next} theme={theme} cardHeight={cardHeight} />
-        </Animated.View>
-
-        <GestureDetector gesture={panGesture}>
-          <Animated.View style={[deckStyles.cardLayer, activeCardStyle]}>
-            <OutfitSwipeCard outfit={current} theme={theme} cardHeight={cardHeight} />
-          </Animated.View>
-        </GestureDetector>
-      </View>
-
-      <View style={deckStyles.footer}>
-        <Text style={deckStyles.counter}>
-          {normalizeLoopIndex(currentIndex, outfits.length) + 1} / {outfits.length}
-        </Text>
-        <Text style={deckStyles.hint}>‹ swipe ›</Text>
-      </View>
-    </View>
-  );
-}
-
-interface OutfitSwipeCardProps {
-  outfit: CreatedOutfit;
-  theme: AppTheme;
-  cardHeight: number;
-}
-
-function OutfitSwipeCard({ outfit, theme, cardHeight }: OutfitSwipeCardProps) {
-  const itemCount = outfit.itemCount ?? outfit.items?.length ?? 0;
-  const previewItems = (outfit.items || []).slice(0, 4);
-  const cardStyles = useMemo(() => createDeckCardStyles(theme, cardHeight), [cardHeight, theme]);
-
-  return (
-    <View style={cardStyles.card}>
-      <View style={cardStyles.header}>
-        <Text style={cardStyles.title} numberOfLines={1}>
-          {outfit.name || 'Outfit'}
-        </Text>
-        <Text style={cardStyles.meta}>{itemCount} items</Text>
-      </View>
-
-      {outfit.coverImageUrl ? (
-        <Image source={{ uri: outfit.coverImageUrl }} style={cardStyles.cover} resizeMode="cover" />
-      ) : previewItems.length > 0 ? (
-        <View style={cardStyles.previewGrid}>
-          {previewItems.map((item) => (
-            <Image key={item.id} source={{ uri: item.imageCutoutUrl }} style={cardStyles.previewThumb} resizeMode="cover" />
-          ))}
-        </View>
-      ) : (
-        <View style={cardStyles.placeholder}>
-          <LineIcon name="spark" size={28} color={theme.colors.textTertiary} />
-        </View>
-      )}
-    </View>
-  );
-}
-
-function createDeckStyles(theme: AppTheme, cardHeight: number) {
-  return StyleSheet.create({
-    wrapper: {
-      width: '100%',
-      alignItems: 'center',
-    },
-    stage: {
-      width: SCREEN_WIDTH - SIDE_PADDING * 2,
-      height: cardHeight + 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    cardLayer: {
-      position: 'absolute',
-      width: '100%',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    footer: {
-      marginTop: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-    },
-    counter: {
-      color: theme.colors.textPrimary,
-      fontSize: 12,
-      fontWeight: '700',
-      letterSpacing: 0.2,
-    },
-    hint: {
-      color: theme.colors.textSecondary,
-      fontSize: 12,
-      fontWeight: '600',
-      letterSpacing: 0.2,
-    },
-  });
-}
-
-function createDeckCardStyles(theme: AppTheme, cardHeight: number) {
-  return StyleSheet.create({
-    card: {
-      width: SCREEN_WIDTH - SIDE_PADDING * 2 - 12,
-      height: cardHeight,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 18,
-      padding: 14,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: theme.mode === 'dark' ? 0.2 : 0.12,
-      shadowRadius: 12,
-      elevation: 4,
-    },
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 10,
-    },
-    title: {
-      flex: 1,
-      fontSize: 15,
-      fontWeight: '700',
-      color: theme.colors.textPrimary,
-      textTransform: 'capitalize',
-      marginRight: 8,
-    },
-    meta: {
-      fontSize: 12,
-      fontWeight: '600',
-      color: theme.colors.textSecondary,
-    },
-    cover: {
-      flex: 1,
-      borderRadius: 12,
-      backgroundColor: theme.colors.surfaceMuted,
-    },
-    previewGrid: {
-      flex: 1,
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'space-between',
-      gap: 8,
-    },
-    previewThumb: {
-      width: '48.5%',
-      height: '48%',
-      borderRadius: 10,
-      backgroundColor: theme.colors.surfaceMuted,
-    },
-    placeholder: {
-      flex: 1,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surfaceMuted,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-  });
-}
-
-function normalizeLoopIndex(index: number, length: number): number {
-  if (length <= 0) return 0;
-  return ((index % length) + length) % length;
-}
-
-function clamp01(value: number): number {
-  'worklet';
-  return Math.max(0, Math.min(1, value));
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
 }

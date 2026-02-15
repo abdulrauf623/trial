@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleProp, Text, TextStyle } from 'react-native';
+import { StyleProp, StyleSheet, TextStyle, ViewStyle } from 'react-native';
+import { Icon } from './Icon';
 
 export type LineIconName =
   | 'home'
@@ -34,40 +35,6 @@ export type LineIconName =
   | 'layers'
   | 'back';
 
-const GLYPHS: Record<LineIconName, string> = {
-  home: '⌂',
-  search: '⌕',
-  wardrobe: '◫',
-  profile: '◯',
-  plus: '+',
-  spark: '✧',
-  bookmark: '⌁',
-  bookmarkFilled: '⌘',
-  camera: '⌖',
-  gallery: '▦',
-  link: '∞',
-  upload: '⇪',
-  refresh: '↻',
-  follow: '⊕',
-  following: '◉',
-  heart: '♡',
-  heartFilled: '♥',
-  share: '↗',
-  close: '×',
-  check: '✓',
-  report: '⚑',
-  edit: '✎',
-  trash: '⌫',
-  logout: '⇥',
-  tune: '≡',
-  sun: '◌',
-  moon: '◐',
-  system: '◎',
-  grid: '▥',
-  layers: '⋮⋮',
-  back: '‹',
-};
-
 interface LineIconProps {
   name: LineIconName;
   size?: number;
@@ -81,21 +48,25 @@ export function LineIcon({
   color = '#111111',
   style,
 }: LineIconProps) {
+  const flattened = StyleSheet.flatten(style || {}) as TextStyle;
+  const resolvedSize = typeof flattened.fontSize === 'number' ? flattened.fontSize : size;
+  const resolvedColor = typeof flattened.color === 'string' ? flattened.color : color;
+  const {
+    fontSize: _fontSize,
+    color: _textColor,
+    fontWeight: _fontWeight,
+    lineHeight: _lineHeight,
+    textAlign: _textAlign,
+    ...iconStyle
+  } = flattened;
+
   return (
-    <Text
-      style={[
-        {
-          fontSize: size,
-          color,
-          lineHeight: size + 2,
-          fontWeight: '500',
-          textAlign: 'center',
-        },
-        style,
-      ]}
-    >
-      {GLYPHS[name]}
-    </Text>
+    <Icon
+      name={name}
+      size={resolvedSize}
+      color={resolvedColor}
+      weight="regular"
+      style={iconStyle as StyleProp<ViewStyle | TextStyle>}
+    />
   );
 }
-

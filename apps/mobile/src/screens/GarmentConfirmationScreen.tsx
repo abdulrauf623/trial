@@ -15,6 +15,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { api } from '../services/api';
 import { LineIcon } from '../components/LineIcon';
+import { prepareWardrobeAsset } from '../wardrobe/pipeline/prepareAsset';
+import { wardrobeAssetRepository } from '../wardrobe/storage/repository';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'GarmentConfirmation'>;
 
@@ -71,7 +73,7 @@ export function GarmentConfirmationScreen({ route, navigation }: Props) {
     setIsSaving(true);
 
     try {
-      await api.createUserGarment({
+      const createdGarment = await api.createUserGarment({
         mediaUploadId: mediaId,
         category,
         subcategory: subcategory || undefined,
@@ -88,6 +90,24 @@ export function GarmentConfirmationScreen({ route, navigation }: Props) {
         tags: selectedTags,
         notes: notes || undefined,
       });
+
+      try {
+        const processedSourceUri =
+          createdGarment.removedBgUrl ||
+          createdGarment.processedUrl ||
+          createdGarment.thumbnailUrl ||
+          imageUrl;
+
+        const localAsset = await prepareWardrobeAsset({
+          originalUri: imageUrl,
+          processedInputUri: processedSourceUri || undefined,
+          categoryHint: category,
+          sourceGarmentId: createdGarment.id,
+        });
+        await wardrobeAssetRepository.upsert(localAsset);
+      } catch (assetPrepError) {
+        console.warn('[GarmentConfirmation] Local wardrobe prep failed:', assetPrepError);
+      }
 
       Alert.alert('Success', 'Item added to your wardrobe!', [
         {
